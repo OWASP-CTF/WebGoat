@@ -1,0 +1,237 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PASTE-READY consumer workflow for a WebGoat CTF fork.
+# Copy this into the WebGoat fork as: .github/workflows/ctf-score.yml
+#
+# WebGoat builds from the repo's root Dockerfile into a single image that serves
+# WebGoat on :8080 and the companion WebWolf on :9090. There is NO default user —
+# the `webgoat`/`webgoat` account must be REGISTERED before scoring (the scorer's
+# lessons log in as that user). Scoring is pass-on-patch.
+#
+# Prerequisites:
+#   - Disable inherited upstream workflows on the fork so only this ctf-score job runs.
+#   - ghcr.io/owasp-ctf/score is PRIVATE; the WebGoat fork has been granted Read access
+#     so this job's GITHUB_TOKEN can pull it. Do NOT make it public.
+#
+# DESIGN — the scorer image is self-contained: the WebGoat challenge rubric is baked
+# into the binary, so `score --target webgoat --url http://app:8080/WebGoat` is passed
+# with NO --dir flags. WEBWOLF_URL points the WebWolf-backed lessons at the same container.
+#
+# SECURITY — pull_request_target runs with the BASE repo's GITHUB_TOKEN while the PR is
+# UNTRUSTED code. The `score` job (the only one that touches PR code) holds no write scopes,
+# builds + runs the PR's app on an --internal Docker network with NO docker socket, NO
+# secrets, NO mounted test files, and uploads only the rendered table. The privileged
+# comment/ack/publish jobs run NONE of the PR's code.
+# ─────────────────────────────────────────────────────────────────────────────
+name: ctf-score
+
+on:
+  pull_request_target:
+    branches: [main] # set to the WebGoat fork's CTF branch
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ctf-score-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  SCORER_IMAGE: ghcr.io/owasp-ctf/score:latest
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out the PR head (untrusted — used only to docker build the app)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Log in to GHCR (pull the private scorer image)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the private scorer image
+        run: docker pull "$SCORER_IMAGE"
+
+      - name: Build the PR's app image (untrusted Dockerfile, no secrets/build-args)
+        run: docker build -t ctf-app:pr .
+
+      - name: Create an isolated, internet-less network
+        run: docker network create --internal ctfnet
+
+      - name: Start WebGoat + WebWolf sandboxed (PR image)
+        run: docker run -d --name app --network ctfnet -e TZ=Etc/UTC ctf-app:pr
+
+      # Wait for WebGoat, then REGISTER the webgoat/webgoat user the scorer's lessons log in as
+      # (WebGoat ships no default account). Both via the scorer container on ctfnet.
+      - name: Wait for WebGoat to become healthy and register the scoring user
+        run: |
+          docker run --rm --entrypoint node --network ctfnet "$SCORER_IMAGE" -e '
+            const B = "http://app:8080/WebGoat";
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            const get = (u, o = {}) => fetch(u, { redirect: "manual", signal: AbortSignal.timeout(8000), ...o });
+            (async () => {
+              let up = false;
+              for (let i = 0; i < 60; i++) { try { if ((await get(B + "/login")).ok) { up = true; break; } } catch {} await sleep(3000); }
+              if (!up) { console.error("WebGoat never served /login"); process.exit(2); }
+              // Register webgoat/webgoat (idempotent: a 200/302 or "already exists" is fine).
+              const body = new URLSearchParams({ username: "webgoat", password: "webgoat", matchingPassword: "webgoat", agree: "agree" });
+              const reg = await get(B + "/register.mvc", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: body.toString() });
+              console.log("register.mvc -> " + reg.status);
+              process.exit(0);
+            })();
+          '
+
+      - name: Dump app logs if WebGoat never came up
+        if: failure()
+        run: |
+          echo "::group::app logs"; docker logs app 2>&1 | tail -100 || true; echo "::endgroup::"
+
+      - name: Score the patched WebGoat (embedded rubric)
+        run: |
+          mkdir -p "$PWD/score-out"
+          rc=0
+          docker run --rm --network ctfnet \
+            -e GITHUB_WORKSPACE=/out -v "$PWD/score-out:/out" -w /out \
+            -e WEBWOLF_URL=http://app:9090/WebWolf \
+            "$SCORER_IMAGE" --target webgoat --url http://app:8080/WebGoat || rc=$?
+          if [ "$rc" -ge 100 ]; then echo "::error::scorer failed (exit $rc)"; exit "$rc"; fi
+          echo "Scorer finished: $rc challenge(s) still open."
+
+      - name: Stop containers
+        if: always()
+        run: docker rm -f app 2>/dev/null || true
+
+      - name: Ensure a score file exists
+        if: always()
+        run: |
+          if [ ! -s "$PWD/score-out/ctf-score.md" ]; then
+            printf '## CTF Patch Score\n\nThe score run produced no output — check the [job log](%s/%s/actions/runs/%s).\n' \
+              "${{ github.server_url }}" "${{ github.repository }}" "${{ github.run_id }}" \
+              > "$PWD/score-out/ctf-score.md"
+          fi
+
+      - name: Upload the score table + JSON sidecar
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: ctf-score
+          path: |
+            score-out/ctf-score.md
+            score-out/ctf-score.json
+          if-no-files-found: error
+
+  publish:
+    needs: score
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    outputs:
+      pushed: ${{ steps.push.outputs.pushed }}
+    steps:
+      - name: Log in to GHCR (pull the private scorer image)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the private scorer image
+        run: docker pull "$SCORER_IMAGE"
+
+      - name: Download the score artifact (table + JSON sidecar)
+        uses: actions/download-artifact@v5
+        continue-on-error: true
+        with:
+          name: ctf-score
+          path: score-out
+
+      - name: Push the score to the Upstash leaderboard
+        id: push
+        env:
+          CTF_UPSTASH_REDIS_REST_URL: ${{ secrets.CTF_UPSTASH_REDIS_REST_URL }}
+          CTF_UPSTASH_REDIS_REST_TOKEN: ${{ secrets.CTF_UPSTASH_REDIS_REST_TOKEN }}
+          CTF_TEAM: ${{ github.event.pull_request.user.login }}
+          CTF_PR: ${{ github.event.pull_request.number }}
+          CTF_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -z "$CTF_UPSTASH_REDIS_REST_URL" ]; then
+            echo "No Upstash config — leaderboard push disabled."; exit 0
+          fi
+          out=$(docker run --rm \
+            -e GITHUB_WORKSPACE=/out -v "$PWD/score-out:/out" -w /out \
+            -e CTF_UPSTASH_REDIS_REST_URL -e CTF_UPSTASH_REDIS_REST_TOKEN \
+            -e CTF_TEAM -e CTF_PR -e CTF_SHA \
+            "$SCORER_IMAGE" score --push)
+          echo "$out"
+          if printf '%s' "$out" | grep -q "leaderboard updated for"; then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  ack:
+    needs: publish
+    if: ${{ always() && needs.publish.outputs.pushed == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Upsert the leaderboard ACK comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- ctf-score-ack -->';
+            const sha = (context.payload.pull_request.head.sha || '').slice(0, 7);
+            const body = `${marker}\n🏁 **Score recorded**\n\n`
+              + `Your patch was evaluated and your result has been saved to the leaderboard.\n\n`
+              + `Commit: \`${sha}\``;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+  comment:
+    needs: score
+    if: ${{ always() && vars.CTF_POST_COMMENT == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Download the score table
+        uses: actions/download-artifact@v5
+        with:
+          name: ctf-score
+          path: score-out
+
+      - name: Upsert the score comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- ctf-score -->';
+            const file = 'score-out/ctf-score.md';
+            const body = `${marker}\n` + (fs.existsSync(file)
+              ? fs.readFileSync(file, 'utf8')
+              : 'CTF score run produced no output.');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
