@@ -61,8 +61,13 @@ jobs:
       - name: Pull the private scorer image
         run: docker pull "$SCORER_IMAGE"
 
-      - name: Build the PR's app image (untrusted Dockerfile, no secrets/build-args)
-        run: docker build -t ctf-app:pr .
+      # WebGoat's root Dockerfile is runtime-only — it `COPY target/webgoat-*.jar`, so the jar must
+      # be Maven-built FIRST. Build with the Maven wrapper inside a JDK container (matches the
+      # Dockerfile's eclipse-temurin:25), then assemble the runtime image.
+      - name: Build the PR's WebGoat jar (Maven) then the app image
+        run: |
+          docker run --rm -v "$PWD":/src -w /src eclipse-temurin:25-jdk-noble ./mvnw -q clean package -DskipTests
+          docker build -t ctf-app:pr .
 
       - name: Create an isolated, internet-less network
         run: docker network create --internal ctfnet
