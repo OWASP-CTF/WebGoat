@@ -1,3 +1,3 @@
-# CTF scoring smoke test (pass-on-patch)
+# CTF scoring smoke test (pass-on-patch) — retrigger
 
-No-op PR to trigger the ctf-score workflow and verify the new pass-on-patch contract: a stock/unpatched fork should now score 0. Safe to close.
+No-op bump to fire the now-deployed ctf-score workflow. Stock fork should score 0.
