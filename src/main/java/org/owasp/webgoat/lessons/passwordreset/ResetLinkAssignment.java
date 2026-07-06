@@ -113,6 +113,12 @@ public class ResetLinkAssignment implements AssignmentEndpoint {
     if (checkIfLinkIsFromTom(form.getResetLink(), username)) {
       usersToTomPassword.put(username, form.getPassword());
     }
+    // Single-use enforcement: consume the reset token so it can never be replayed. Combined
+    // with the trusted-host link generation in ResetLinkAssignmentForgotPassword (the Host
+    // header is no longer used to build reset links), an attacker can no longer capture and
+    // reuse Tom's reset link.
+    resetLinks.remove(form.getResetLink());
+    userToTomResetLink.remove(username);
     modelAndView.setViewName(VIEW_FORMATTER.formatted("success"));
     return modelAndView;
   }

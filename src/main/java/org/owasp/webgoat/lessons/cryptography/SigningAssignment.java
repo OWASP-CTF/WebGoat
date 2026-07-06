@@ -11,7 +11,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.KeyPair;
 import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
 import java.security.interfaces.RSAPublicKey;
+import java.util.Base64;
 import javax.xml.bind.DatatypeConverter;
 import lombok.extern.slf4j.Slf4j;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
@@ -39,14 +41,21 @@ public class SigningAssignment implements AssignmentEndpoint {
   public String getPrivateKey(HttpServletRequest request)
       throws NoSuchAlgorithmException, InvalidAlgorithmParameterException {
 
-    String privateKey = (String) request.getSession().getAttribute("privateKeyString");
-    if (privateKey == null) {
-      KeyPair keyPair = CryptoUtil.generateKeyPair();
-      privateKey = CryptoUtil.getPrivateKeyInPEM(keyPair);
-      request.getSession().setAttribute("privateKeyString", privateKey);
+    // SECURITY FIX (private-key disclosure): the private key is generated server-side and stored
+    // only in the session — it is NEVER serialized to the client. Only the public key is returned,
+    // so an attacker can no longer obtain the private key and forge a valid signature.
+    KeyPair keyPair = (KeyPair) request.getSession().getAttribute("keyPair");
+    if (keyPair == null) {
+      keyPair = CryptoUtil.generateKeyPair();
       request.getSession().setAttribute("keyPair", keyPair);
     }
-    return privateKey;
+    return getPublicKeyInPEM(keyPair.getPublic());
+  }
+
+  private String getPublicKeyInPEM(PublicKey publicKey) {
+    return "-----BEGIN PUBLIC KEY-----\n"
+        + Base64.getEncoder().encodeToString(publicKey.getEncoded())
+        + "\n-----END PUBLIC KEY-----\n";
   }
 
   @PostMapping("/crypto/signing/verify")

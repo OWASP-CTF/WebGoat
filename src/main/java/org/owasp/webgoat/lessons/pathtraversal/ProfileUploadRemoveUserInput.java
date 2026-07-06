@@ -7,6 +7,8 @@ package org.owasp.webgoat.lessons.pathtraversal;
 import static org.springframework.http.MediaType.ALL_VALUE;
 import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
 
+import java.io.File;
+import java.util.UUID;
 import org.owasp.webgoat.container.CurrentUsername;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
 import org.owasp.webgoat.container.assignments.AttackResult;
@@ -38,6 +40,15 @@ public class ProfileUploadRemoveUserInput extends ProfileUploadBase {
   public AttackResult uploadFileHandler(
       @RequestParam("uploadedFileRemoveUserInput") MultipartFile file,
       @CurrentUsername String username) {
-    return super.execute(file, file.getOriginalFilename(), username);
+    // The multipart filename is attacker-controlled just like any form field, so it is
+    // never used for filesystem operations. Generate an unpredictable server-side name and
+    // keep only a sanitized extension derived from the client filename.
+    String original = file.getOriginalFilename();
+    String extension = "";
+    if (original != null && original.contains(".")) {
+      extension = new File(original.substring(original.lastIndexOf('.'))).getName();
+    }
+    String serverName = UUID.randomUUID() + extension;
+    return super.execute(file, serverName, username);
   }
 }

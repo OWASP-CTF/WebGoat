@@ -35,28 +35,28 @@ public class BypassRestrictionsFrontendValidation implements AssignmentEndpoint 
     final String regex5 = "^\\d{5}$";
     final String regex6 = "^\\d{5}(-\\d{4})?$";
     final String regex7 = "^[2-9]\\d{2}-?\\d{3}-?\\d{4}$";
-    if (error > 0) {
+    // The client-supplied "error" flag is ignored — the server never trusts a
+    // client-provided validity indicator. Every field must positively MATCH its
+    // regex server-side, mirroring the JavaScript validation as the security boundary.
+    if (!field1.matches(regex1)) {
       return failed(this).build();
     }
-    if (field1.matches(regex1)) {
+    if (!field2.matches(regex2)) {
       return failed(this).build();
     }
-    if (field2.matches(regex2)) {
+    if (!field3.matches(regex3)) {
       return failed(this).build();
     }
-    if (field3.matches(regex3)) {
+    if (!field4.matches(regex4)) {
       return failed(this).build();
     }
-    if (field4.matches(regex4)) {
+    if (!field5.matches(regex5)) {
       return failed(this).build();
     }
-    if (field5.matches(regex5)) {
+    if (!field6.matches(regex6)) {
       return failed(this).build();
     }
-    if (field6.matches(regex6)) {
-      return failed(this).build();
-    }
-    if (field7.matches(regex7)) {
+    if (!field7.matches(regex7)) {
       return failed(this).build();
     }
     return success(this).build();

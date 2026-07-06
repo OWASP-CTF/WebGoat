@@ -59,7 +59,7 @@ public class Salaries {
     File d = new File(webGoatHomeDirectory, "ClientSideFiltering/employees.xml");
     XPathFactory factory = XPathFactory.newInstance();
     XPath path = factory.newXPath();
-    int columns = 5;
+    int columns = 3;
     List<Map<String, Object>> json = new ArrayList<>();
     java.util.Map<String, Object> employeeJson = new HashMap<>();
 
@@ -70,9 +70,9 @@ public class Salaries {
 
       sb.append("/Employees/Employee/UserID | ");
       sb.append("/Employees/Employee/FirstName | ");
-      sb.append("/Employees/Employee/LastName | ");
-      sb.append("/Employees/Employee/SSN | ");
-      sb.append("/Employees/Employee/Salary ");
+      sb.append("/Employees/Employee/LastName ");
+      // Server-side field-level authorisation: SSN and Salary are confidential and are
+      // never serialised to the client. Confidentiality must not rely on client-side filtering.
 
       String expression = sb.toString();
       nodes = (NodeList) path.evaluate(expression, inputSource, XPathConstants.NODESET);
