@@ -30,36 +30,39 @@ public class CSRFGetFlag {
 
     Map<String, Object> response = new HashMap<>();
 
-    String host = (req.getHeader("host") == null) ? "NULL" : req.getHeader("host");
-    String referer = (req.getHeader("referer") == null) ? "NULL" : req.getHeader("referer");
-    String[] refererArr = referer.split("/");
-
-    if (referer.equals("NULL")) {
-      if ("true".equals(req.getParameter("csrf"))) {
-        Random random = new Random();
-        userSessionData.setValue("csrf-get-success", random.nextInt(65536));
-        response.put("success", true);
-        response.put("message", pluginMessages.getMessage("csrf-get-null-referer.success"));
-        response.put("flag", userSessionData.getValue("csrf-get-success"));
-      } else {
-        Random random = new Random();
-        userSessionData.setValue("csrf-get-success", random.nextInt(65536));
-        response.put("success", true);
-        response.put("message", pluginMessages.getMessage("csrf-get-other-referer.success"));
-        response.put("flag", userSessionData.getValue("csrf-get-success"));
-      }
-    } else if (refererArr[2].equals(host)) {
+    // CSRF defense: this state-changing action only issues a flag to a verified same-origin
+    // request. A forged cross-site request (no Origin/Referer, or one from a foreign host) is
+    // rejected and never receives a flag, so it cannot be replayed to /csrf/confirm-flag-1.
+    if (!isSameOrigin(req)) {
       response.put("success", false);
-      response.put("message", "Appears the request came from the original host");
+      response.put("message", "This request could not be verified (cross-site request rejected)");
       response.put("flag", null);
-    } else {
-      Random random = new Random();
-      userSessionData.setValue("csrf-get-success", random.nextInt(65536));
-      response.put("success", true);
-      response.put("message", pluginMessages.getMessage("csrf-get-other-referer.success"));
-      response.put("flag", userSessionData.getValue("csrf-get-success"));
+      return response;
     }
 
+    Random random = new Random();
+    userSessionData.setValue("csrf-get-success", random.nextInt(65536));
+    response.put("success", true);
+    response.put("message", pluginMessages.getMessage("csrf-get-other-referer.success"));
+    response.put("flag", userSessionData.getValue("csrf-get-success"));
+
     return response;
+  }
+
+  private boolean isSameOrigin(HttpServletRequest request) {
+    String host = request.getHeader("Host");
+    String source = request.getHeader("Origin");
+    if (source == null) {
+      source = request.getHeader("Referer");
+    }
+    if (host == null || source == null) {
+      return false;
+    }
+    try {
+      String sourceHost = java.net.URI.create(source).getAuthority();
+      return host.equals(sourceHost);
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
   }
 }

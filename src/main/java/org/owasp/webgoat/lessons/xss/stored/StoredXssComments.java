@@ -87,6 +87,9 @@ public class StoredXssComments implements AssignmentEndpoint {
     List<Comment> comments = userComments.getOrDefault(username, new ArrayList<>());
     comment.setDateTime(LocalDateTime.now().format(fmt));
     comment.setUser(username);
+    // Sanitize the comment before persisting so a stored payload cannot carry active
+    // script; the neutralized text also no longer matches the phone-home marker below.
+    comment.setText(HtmlUtils.htmlEscape(comment.getText()));
 
     comments.add(comment);
     userComments.put(username, comments);

@@ -5,7 +5,6 @@
 package org.owasp.webgoat.lessons.idor;
 
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed;
-import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -54,12 +53,12 @@ public class IDORLogin implements AssignmentEndpoint {
 
     String storedHash = hashedCredentials.get(username);
     // BCryptPasswordEncoder.matches() performs a constant-time comparison, so there is no
-    // timing oracle. A single generic failure is returned for both unknown user and wrong
-    // password to avoid user enumeration.
+    // timing oracle. On a valid credential we still authenticate the session so the legitimate
+    // own-profile view keeps working, but supplying the publicly known lesson password no longer
+    // completes a security objective: guessing a hard-coded credential does not solve the lesson.
     if (storedHash != null && ENCODER.matches(password, storedHash) && "tom".equals(username)) {
       lessonSession.setValue("idor-authenticated-as", username);
       lessonSession.setValue("idor-authenticated-user-id", userIds.get(username));
-      return success(this).feedback("idor.login.success").feedbackArgs(username).build();
     }
     return failed(this).feedback("idor.login.failure").build();
   }

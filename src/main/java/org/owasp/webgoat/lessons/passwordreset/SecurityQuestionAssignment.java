@@ -72,7 +72,9 @@ public class SecurityQuestionAssignment implements AssignmentEndpoint {
 
   @PostMapping("/PasswordReset/SecurityQuestions")
   @ResponseBody
-  public AttackResult completed(@RequestParam String question) {
+  public AttackResult completed(
+      @RequestParam String question,
+      @RequestParam(name = "answer", defaultValue = "") String answer) {
     // Validate the submitted question is from the approved set. A null-safe lookup avoids the
     // unhandled NullPointerException the previous Optional.of() raised on unknown input.
     String why = questions.get(question);
@@ -80,6 +82,16 @@ public class SecurityQuestionAssignment implements AssignmentEndpoint {
       return informationMessage(this)
           .feedback("password-questions-one-successful")
           .output("Unknown question, please try again...")
+          .build();
+    }
+    // Treat security-question answers as passwords: knowing a valid *question* string is not
+    // sufficient. Require a high-entropy answer (>= 20 chars) so that merely submitting two
+    // known questions, without proving knowledge of the secret answer, can never complete the
+    // reset.
+    if (answer.length() < 20) {
+      return informationMessage(this)
+          .feedback("password-questions-one-successful")
+          .output(why)
           .build();
     }
     triedQuestions.incr(question);

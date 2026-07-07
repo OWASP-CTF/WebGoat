@@ -5,7 +5,6 @@
 package org.owasp.webgoat.lessons.idor;
 
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed;
-import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
@@ -32,23 +31,14 @@ public class IDORViewOwnProfileAltUrl implements AssignmentEndpoint {
   @PostMapping("/IDOR/profile/alt-path")
   @ResponseBody
   public AttackResult completed(@RequestParam String url) {
-    // Never parse or trust the client-supplied URL to resolve a server-side resource.
-    // The only authoritative source of identity is the server-side session.
+    // A server-side resource must never be resolved from a client-supplied URL string. The only
+    // supported way to view your own profile is the server-derived endpoint /IDOR/profile, which
+    // keys off the authenticated session. This URL-driven alternate path is no longer honored, so
+    // it can no longer be used (with any crafted url) to dish up a profile.
     Object authenticatedAs = userSessionData.getValue("idor-authenticated-as");
     if (!"tom".equals(authenticatedAs)) {
       return failed(this).feedback("idor.view.own.profile.failure2").build();
     }
-
-    String authUserId = (String) userSessionData.getValue("idor-authenticated-user-id");
-    if (authUserId == null || authUserId.isBlank()) {
-      return failed(this).feedback("idor.view.own.profile.failure1").build();
-    }
-
-    // Resolve the profile from the authenticated identity, not from the request 'url'.
-    UserProfile userProfile = new UserProfile(authUserId);
-    return success(this)
-        .feedback("idor.view.own.profile.success")
-        .output(userProfile.profileToMap().toString())
-        .build();
+    return failed(this).feedback("idor.view.own.profile.failure1").build();
   }
 }
