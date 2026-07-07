@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.HtmlUtils;
 
 @RestController
 public class StoredXssComments implements AssignmentEndpoint {
@@ -67,7 +68,14 @@ public class StoredXssComments implements AssignmentEndpoint {
       allComments.addAll(newComments);
     }
     Collections.reverse(allComments);
-    return allComments;
+    // Encode each comment's text for the HTML context so stored markup (e.g. a
+    // <script> payload) renders as inert text and never executes (blocks stored XSS).
+    List<Comment> safeComments = Lists.newArrayList();
+    for (Comment c : allComments) {
+      safeComments.add(
+          new Comment(c.getUser(), c.getDateTime(), HtmlUtils.htmlEscape(c.getText())));
+    }
+    return safeComments;
   }
 
   @PostMapping("/CrossSiteScriptingStored/stored-xss")

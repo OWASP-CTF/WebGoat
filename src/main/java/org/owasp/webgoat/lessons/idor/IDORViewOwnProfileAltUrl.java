@@ -32,30 +32,23 @@ public class IDORViewOwnProfileAltUrl implements AssignmentEndpoint {
   @PostMapping("/IDOR/profile/alt-path")
   @ResponseBody
   public AttackResult completed(@RequestParam String url) {
-    try {
-      if (userSessionData.getValue("idor-authenticated-as").equals("tom")) {
-        // going to use session auth to view this one
-        String authUserId = (String) userSessionData.getValue("idor-authenticated-user-id");
-        // don't care about http://localhost:8080 ... just want WebGoat/
-        String[] urlParts = url.split("/");
-        if (urlParts[0].equals("WebGoat")
-            && urlParts[1].equals("IDOR")
-            && urlParts[2].equals("profile")
-            && urlParts[3].equals(authUserId)) {
-          UserProfile userProfile = new UserProfile(authUserId);
-          return success(this)
-              .feedback("idor.view.own.profile.success")
-              .output(userProfile.profileToMap().toString())
-              .build();
-        } else {
-          return failed(this).feedback("idor.view.own.profile.failure1").build();
-        }
-
-      } else {
-        return failed(this).feedback("idor.view.own.profile.failure2").build();
-      }
-    } catch (Exception ex) {
-      return failed(this).output("an error occurred with your request").build();
+    // Never parse or trust the client-supplied URL to resolve a server-side resource.
+    // The only authoritative source of identity is the server-side session.
+    Object authenticatedAs = userSessionData.getValue("idor-authenticated-as");
+    if (!"tom".equals(authenticatedAs)) {
+      return failed(this).feedback("idor.view.own.profile.failure2").build();
     }
+
+    String authUserId = (String) userSessionData.getValue("idor-authenticated-user-id");
+    if (authUserId == null || authUserId.isBlank()) {
+      return failed(this).feedback("idor.view.own.profile.failure1").build();
+    }
+
+    // Resolve the profile from the authenticated identity, not from the request 'url'.
+    UserProfile userProfile = new UserProfile(authUserId);
+    return success(this)
+        .feedback("idor.view.own.profile.success")
+        .output(userProfile.profileToMap().toString())
+        .build();
   }
 }

@@ -30,6 +30,10 @@ import jakarta.servlet.http.HttpServletRequest;
 @RestController
 public class ResetLinkAssignmentForgotPassword implements AssignmentEndpoint {
 
+  // Server-controlled canonical host used to build reset links. It is NEVER taken from the
+  // incoming request's Host header, which is fully attacker-controlled.
+  private static final String CANONICAL_HOST = "localhost:8080";
+
   private final RestTemplate restTemplate;
   private final String webWolfHost;
   private final String webWolfPort;
@@ -64,19 +68,13 @@ public class ResetLinkAssignmentForgotPassword implements AssignmentEndpoint {
       @RequestParam String email, HttpServletRequest request, @CurrentUsername String username) {
     String resetLink = UUID.randomUUID().toString();
     ResetLinkAssignment.resetLinks.add(resetLink);
-    String host = request.getHeader(HttpHeaders.HOST);
-    if (ResetLinkAssignment.TOM_EMAIL.equals(email)
-        && (host.contains(webWolfPort) // We are also checking the DNS name in case the user enters a domain instead of
-                                       // an IP
-            && (host.contains(webWolfHost) || webWolfHost.equals(resolveDNSOrNull(host))))) { // User indeed changed the host header.
-      ResetLinkAssignment.userToTomResetLink.put(username, resetLink);
-      fakeClickingLinkEmail(webWolfURL, resetLink);
-    } else {
-      try {
-        sendMailToUser(email, host, resetLink);
-      } catch (Exception e) {
-        return failed(this).output("E-mail can't be send. please try again.").build();
-      }
+    // SECURE: the reset-link host is a server-controlled canonical value. The Host request
+    // header is intentionally ignored, so it can no longer be poisoned to redirect Tom's
+    // reset link to an attacker-controlled WebWolf instance.
+    try {
+      sendMailToUser(email, CANONICAL_HOST, resetLink);
+    } catch (Exception e) {
+      return failed(this).output("E-mail can't be send. please try again.").build();
     }
 
     return success(this).feedback("email.send").feedbackArgs(email).build();

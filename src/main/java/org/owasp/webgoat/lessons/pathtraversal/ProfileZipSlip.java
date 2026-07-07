@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.Enumeration;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import lombok.SneakyThrows;
@@ -69,16 +70,42 @@ public class ProfileZipSlip extends ProfileUploadBase {
     var currentImage = getProfilePictureAsBase64(username);
 
     try {
-      var uploadedZipFile = tmpZipDirectory.resolve(file.getOriginalFilename());
+      // Store the uploaded archive under an unpredictable, server-generated name so the
+      // attacker-controlled original filename is never part of a filesystem path.
+      var uploadedZipFile = tmpZipDirectory.resolve(UUID.randomUUID() + ".zip");
       FileCopyUtils.copy(file.getBytes(), uploadedZipFile.toFile());
 
-      ZipFile zip = new ZipFile(uploadedZipFile.toFile());
-      Enumeration<? extends ZipEntry> entries = zip.entries();
-      while (entries.hasMoreElements()) {
-        ZipEntry e = entries.nextElement();
-        File f = new File(tmpZipDirectory.toFile(), e.getName());
-        InputStream is = zip.getInputStream(e);
-        Files.copy(is, f.toPath(), StandardCopyOption.REPLACE_EXISTING);
+      String canonicalRoot = tmpZipDirectory.toFile().getCanonicalPath();
+
+      try (ZipFile zip = new ZipFile(uploadedZipFile.toFile())) {
+        Enumeration<? extends ZipEntry> entries = zip.entries();
+        while (entries.hasMoreElements()) {
+          ZipEntry e = entries.nextElement();
+          String entryName = e.getName();
+
+          // Reject absolute paths and any entry containing a traversal sequence before it is
+          // ever turned into a filesystem path (Zip Slip defense).
+          if (entryName.startsWith("/") || entryName.contains("..")) {
+            return failed(this).output("path-traversal-zip-slip.attack-detected").build();
+          }
+
+          File target = new File(tmpZipDirectory.toFile(), entryName);
+
+          // Per-entry canonical-path containment check: every extracted file must resolve
+          // inside the extraction root.
+          if (!target.getCanonicalPath().startsWith(canonicalRoot + File.separator)) {
+            return failed(this).output("path-traversal-zip-slip.attack-detected").build();
+          }
+
+          if (e.isDirectory()) {
+            target.mkdirs();
+          } else {
+            target.getParentFile().mkdirs();
+            try (InputStream is = zip.getInputStream(e)) {
+              Files.copy(is, target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+          }
+        }
       }
 
       return isSolved(currentImage, getProfilePictureAsBase64(username));

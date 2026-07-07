@@ -7,6 +7,8 @@ package org.owasp.webgoat.lessons.passwordreset;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
@@ -48,7 +50,14 @@ public class QuestionsAssignment implements AssignmentEndpoint {
           .feedback("password-questions-unknown-user")
           .feedbackArgs(username)
           .build();
-    } else if (validAnswer.equals(securityQuestion)) {
+    }
+    // Constant-time comparison of the answer to remove any timing side-channel that could
+    // reveal how "close" a guess is.
+    boolean correct =
+        MessageDigest.isEqual(
+            validAnswer.getBytes(StandardCharsets.UTF_8),
+            securityQuestion.getBytes(StandardCharsets.UTF_8));
+    if (correct) {
       return success(this).build();
     }
     return failed(this).build();
