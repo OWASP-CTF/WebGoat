@@ -42,29 +42,30 @@ public class SqlInjectionLesson5b implements AssignmentEndpoint {
   }
 
   protected AttackResult injectableQuery(String login_count, String accountName) {
-    String queryString = "SELECT * From user_data WHERE Login_Count = ? and userid= " + accountName;
+    // Both values are bound. userid is a numeric column, so parse it as an int before binding —
+    // a payload such as "0 OR 1=1" fails the parse and never reaches the query.
+    String queryString = "SELECT * From user_data WHERE Login_Count = ? and userid = ?";
     try (Connection connection = dataSource.getConnection()) {
       PreparedStatement query =
           connection.prepareStatement(
               queryString, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
 
       int count = 0;
+      int userId = 0;
       try {
         count = Integer.parseInt(login_count);
+        userId = Integer.parseInt(accountName);
       } catch (Exception e) {
         return failed(this)
             .output(
-                "Could not parse: "
-                    + login_count
-                    + " to a number"
+                "Could not parse login_count/userid to a number"
                     + "<br> Your query was: "
                     + queryString.replace("?", login_count))
             .build();
       }
 
       query.setInt(1, count);
-      // String query = "SELECT * FROM user_data WHERE Login_Count = " + login_count + " and userid
-      // = " + accountName, ;
+      query.setInt(2, userId);
       try {
         ResultSet results = query.executeQuery();
 

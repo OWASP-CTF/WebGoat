@@ -54,11 +54,17 @@ public class CSRFFeedback implements AssignmentEndpoint {
     } catch (IOException e) {
       return failed(this).feedback(ExceptionUtils.getStackTrace(e)).build();
     }
-    boolean correctCSRF =
-        requestContainsWebGoatCookie(request.getCookies())
-            && request.getContentType().contains(MediaType.TEXT_PLAIN_VALUE);
-    correctCSRF &= hostOrRefererDifferentHost(request);
-    if (correctCSRF) {
+    // A CSRF-safe request must use a Content-Type and a custom header that a simple
+    // cross-origin HTML form cannot produce. "Simple" content types (text/plain,
+    // application/x-www-form-urlencoded, multipart/form-data) and the absence of a
+    // custom header identify a forgeable request, which is rejected.
+    String contentType = request.getContentType();
+    boolean jsonContentType =
+        contentType != null && contentType.contains(MediaType.APPLICATION_JSON_VALUE);
+    boolean hasCustomHeader = "XMLHttpRequest".equals(request.getHeader("X-Requested-With"));
+    boolean safeRequest =
+        requestContainsWebGoatCookie(request.getCookies()) && jsonContentType && hasCustomHeader;
+    if (safeRequest) {
       String flag = UUID.randomUUID().toString();
       userSessionData.setValue("csrf-feedback", flag);
       return success(this).feedback("csrf-feedback-success").feedbackArgs(flag).build();

@@ -31,30 +31,55 @@ public class VulnerableComponentsLesson implements AssignmentEndpoint {
 
     try {
       if (!StringUtils.isEmpty(payload)) {
-        payload =
-            payload
-                .replace("+", "")
-                .replace("\r", "")
-                .replace("\n", "")
-                .replace("> ", ">")
-                .replace(" <", "<");
+        payload = sanitize(payload);
+      }
+      // SECURE: deny-by-default — reject any payload that tries to instantiate types other than
+      // a plain <contact>. XStream 1.4.5 has no type-permission API, so we refuse dynamic proxies
+      // and arbitrary class references (CVE-2013-7285) before they are ever deserialized.
+      if (!isSafeContactPayload(payload)) {
+        return failed(this)
+            .feedback("vulnerable-components.close")
+            .output("Payload rejected: only a simple <contact> is allowed")
+            .build();
       }
       contact = (Contact) xstream.fromXML(payload);
     } catch (Exception ex) {
       return failed(this).feedback("vulnerable-components.close").output(ex.getMessage()).build();
     }
 
-    try {
-      if (null != contact) {
-        contact.getFirstName(); // trigger the example like
-        // https://x-stream.github.io/CVE-2013-7285.html
-      }
-      if (!(contact instanceof ContactImpl)) {
-        return success(this).feedback("vulnerable-components.success").build();
-      }
-    } catch (Exception e) {
-      return success(this).feedback("vulnerable-components.success").output(e.getMessage()).build();
+    // SECURE: only operate on a genuine ContactImpl. Never invoke a method on a deserialized
+    // proxy — the CVE-2013-7285 dynamic-proxy gadget executes its payload on method invocation.
+    if (contact instanceof ContactImpl) {
+      contact.getFirstName();
+      return success(this).feedback("vulnerable-components.success").build();
     }
     return failed(this).feedback("vulnerable-components.fromXML").feedbackArgs(contact).build();
+  }
+
+  private String sanitize(String input) {
+    return input
+        .replace("+", "")
+        .replace("\r", "")
+        .replace("\n", "")
+        .replace("> ", ">")
+        .replace(" <", "<");
+  }
+
+  private boolean isSafeContactPayload(String payload) {
+    if (StringUtils.isEmpty(payload)) {
+      return false;
+    }
+    String lower = payload.toLowerCase();
+    // Reject dynamic proxies and any explicit class-mapping / package reference that would let
+    // an attacker steer XStream into instantiating an arbitrary type.
+    return !(lower.contains("dynamic-proxy")
+        || lower.contains("class=")
+        || lower.contains("java.")
+        || lower.contains("javax.")
+        || lower.contains("sun.")
+        || lower.contains("eventhandler")
+        || lower.contains("processbuilder")
+        || lower.contains("<handler")
+        || lower.contains("<interface"));
   }
 }

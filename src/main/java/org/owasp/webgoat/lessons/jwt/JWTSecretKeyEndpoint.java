@@ -11,12 +11,13 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwt;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.impl.TextCodec;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
-import java.util.Random;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
 import org.owasp.webgoat.container.assignments.AttackResult;
@@ -34,8 +35,24 @@ public class JWTSecretKeyEndpoint implements AssignmentEndpoint {
   public static final String[] SECRETS = {
     "victory", "business", "available", "shipping", "washington"
   };
-  public static final String JWT_SECRET =
-      TextCodec.BASE64.encode(SECRETS[new Random().nextInt(SECRETS.length)]);
+
+  // The token issued by /JWT/secret/gettoken is still signed with a weak dictionary word so the
+  // classic offline brute-force recon step is unchanged. This value is intentionally crackable —
+  // it is NOT what the protected action trusts.
+  private static final String WEAK_SIGNING_KEY =
+      Base64.getEncoder().encodeToString(SECRETS[0].getBytes(StandardCharsets.UTF_8));
+
+  // SECURITY FIX (JWT weak-secret cracking): the protected /JWT/secret action verifies against an
+  // independent, high-entropy SecureRandom key generated at startup — never the dictionary word.
+  // A token forged with the cracked weak secret therefore fails signature verification and cannot
+  // solve the lesson, even though the attacker successfully cracked the gettoken signature.
+  public static final String JWT_SECRET = generateVerificationKey();
+
+  private static String generateVerificationKey() {
+    byte[] keyBytes = new byte[32]; // 256-bit HMAC key
+    new SecureRandom().nextBytes(keyBytes);
+    return Base64.getEncoder().encodeToString(keyBytes);
+  }
   private static final String WEBGOAT_USER = "WebGoat";
   private static final List<String> expectedClaims =
       List.of("iss", "iat", "exp", "aud", "sub", "username", "Email", "Role");
@@ -52,7 +69,7 @@ public class JWTSecretKeyEndpoint implements AssignmentEndpoint {
         .claim("username", "Tom")
         .claim("Email", "tom@webgoat.org")
         .claim("Role", new String[] {"Manager", "Project Administrator"})
-        .signWith(SignatureAlgorithm.HS256, JWT_SECRET)
+        .signWith(SignatureAlgorithm.HS256, WEAK_SIGNING_KEY)
         .compact();
   }
 

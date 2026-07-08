@@ -14,12 +14,13 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwt;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.impl.TextCodec;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -52,8 +53,17 @@ import org.springframework.web.bind.annotation.RestController;
 })
 public class JWTVotesEndpoint implements AssignmentEndpoint {
 
-  public static final String JWT_PASSWORD = TextCodec.BASE64.encode("victory");
+  // SECURITY FIX (JWT algorithm/forgery bypass): sign with a high-entropy random key generated
+  // at startup, not a guessable dictionary word such as base64("victory"). An attacker can no
+  // longer forge a token with admin=true.
+  public static final String JWT_PASSWORD = generateSigningKey();
   private static String validUsers = "TomJerrySylvester";
+
+  private static String generateSigningKey() {
+    byte[] keyBytes = new byte[64]; // 512-bit key for HS512
+    new SecureRandom().nextBytes(keyBytes);
+    return Base64.getEncoder().encodeToString(keyBytes);
+  }
 
   private static int totalVotes = 38929;
   private final Map<String, Vote> votes = new HashMap<>();
@@ -184,7 +194,8 @@ public class JWTVotesEndpoint implements AssignmentEndpoint {
       return failed(this).feedback("jwt-invalid-token").build();
     } else {
       try {
-        Jwt jwt = Jwts.parser().setSigningKey(JWT_PASSWORD).parse(accessToken);
+        // parseClaimsJws() requires a valid HS512 signature and rejects unsigned (alg:none) tokens.
+        Jwt jwt = Jwts.parser().setSigningKey(JWT_PASSWORD).parseClaimsJws(accessToken);
         Claims claims = (Claims) jwt.getBody();
         boolean isAdmin = Boolean.valueOf(String.valueOf(claims.get("admin")));
         if (!isAdmin) {

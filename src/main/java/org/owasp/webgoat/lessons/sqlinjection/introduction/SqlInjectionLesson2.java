@@ -9,9 +9,9 @@ import static java.sql.ResultSet.TYPE_SCROLL_INSENSITIVE;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import org.owasp.webgoat.container.LessonDataSource;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
@@ -45,8 +45,15 @@ public class SqlInjectionLesson2 implements AssignmentEndpoint {
 
   protected AttackResult injectableQuery(String query) {
     try (var connection = dataSource.getConnection()) {
-      Statement statement = connection.createStatement(TYPE_SCROLL_INSENSITIVE, CONCUR_READ_ONLY);
-      ResultSet results = statement.executeQuery(query);
+      // The department is the only legitimate user input; bind it as data so the
+      // supplied value can never alter the structure of the query.
+      PreparedStatement statement =
+          connection.prepareStatement(
+              "SELECT * FROM employees WHERE department = ?",
+              TYPE_SCROLL_INSENSITIVE,
+              CONCUR_READ_ONLY);
+      statement.setString(1, query);
+      ResultSet results = statement.executeQuery();
       StringBuilder output = new StringBuilder();
 
       if(!results.first()) {
@@ -54,9 +61,6 @@ public class SqlInjectionLesson2 implements AssignmentEndpoint {
       }
 
       if ("Marketing".equals(results.getString("department"))) {
-        output.append("<span class='feedback-positive'>")
-                .append(query)
-                .append("</span>");
         output.append(SqlInjectionLesson8.generateTable(results));
         return success(this).feedback("sql-injection.2.success").output(output.toString()).build();
       } else {

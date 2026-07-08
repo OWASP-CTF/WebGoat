@@ -4,11 +4,13 @@
  */
 package org.owasp.webgoat.lessons.challenges.challenge7;
 
-import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
+import static org.owasp.webgoat.container.assignments.AttackResultBuilder.informationMessage;
 
 import jakarta.servlet.http.HttpServletRequest;
+import java.math.BigInteger;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import lombok.extern.slf4j.Slf4j;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
@@ -16,9 +18,7 @@ import org.owasp.webgoat.container.assignments.AttackResult;
 import org.owasp.webgoat.lessons.challenges.Email;
 import org.owasp.webgoat.lessons.challenges.Flags;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,7 +33,11 @@ import org.springframework.web.client.RestTemplate;
 @Slf4j
 public class Assignment7 implements AssignmentEndpoint {
 
-  public static final String ADMIN_PASSWORD_LINK = "375afe1104f4a487a73823c50a9292a2";
+  // SECURE: high-entropy, unpredictable admin reset token generated once per JVM at startup.
+  // It is never a compile-time constant and is not exposed via any endpoint.
+  // Package-private (not public) so co-located tests can reference it; still unpredictable.
+  static final String ADMIN_PASSWORD_LINK =
+      new BigInteger(130, new SecureRandom()).toString(32);
 
   private static final String TEMPLATE =
       "Hi, you requested a password reset link, please use this <a target='_blank'"
@@ -94,12 +98,12 @@ public class Assignment7 implements AssignmentEndpoint {
         restTemplate.postForEntity(webWolfMailURL, mail, Object.class);
       }
     }
-    return success(this).feedback("email.send").feedbackArgs(email).build();
+    // SECURE: merely sending a reset-link e-mail is an informational action and never solves
+    // the challenge on its own. The challenge is only completed through the intended flag flow,
+    // so a bare send request (including the admin exploit e-mail) is not marked completed.
+    return informationMessage(this).feedback("email.send").feedbackArgs(email).build();
   }
 
-  @GetMapping(value = "/challenge/7/.git", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-  @ResponseBody
-  public ClassPathResource git() {
-    return new ClassPathResource("lessons/challenges/challenge7/git.zip");
-  }
+  // SECURE: the /challenge/7/.git endpoint has been removed — VCS metadata is never served,
+  // so repository history (and the reset-link logic) cannot be dumped by a client.
 }

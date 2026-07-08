@@ -39,14 +39,18 @@ public class SigningAssignment implements AssignmentEndpoint {
   public String getPrivateKey(HttpServletRequest request)
       throws NoSuchAlgorithmException, InvalidAlgorithmParameterException {
 
-    String privateKey = (String) request.getSession().getAttribute("privateKeyString");
-    if (privateKey == null) {
-      KeyPair keyPair = CryptoUtil.generateKeyPair();
-      privateKey = CryptoUtil.getPrivateKeyInPEM(keyPair);
-      request.getSession().setAttribute("privateKeyString", privateKey);
+    // SECURITY FIX (private-key disclosure): the real key pair trusted by /crypto/signing/verify
+    // is generated server-side and stored only in the session — it is NEVER serialized to the
+    // client. This endpoint hands out a throwaway DECOY private key that is unrelated to the
+    // server's key pair. A signature produced with the decoy cannot satisfy /verify: the modulus
+    // it derives will not match the server's public key, so the forgery is rejected.
+    KeyPair keyPair = (KeyPair) request.getSession().getAttribute("keyPair");
+    if (keyPair == null) {
+      keyPair = CryptoUtil.generateKeyPair();
       request.getSession().setAttribute("keyPair", keyPair);
     }
-    return privateKey;
+    KeyPair decoyKeyPair = CryptoUtil.generateKeyPair();
+    return CryptoUtil.getPrivateKeyInPEM(decoyKeyPair);
   }
 
   @PostMapping("/crypto/signing/verify")

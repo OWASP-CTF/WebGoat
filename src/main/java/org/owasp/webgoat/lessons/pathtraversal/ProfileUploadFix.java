@@ -40,7 +40,10 @@ public class ProfileUploadFix extends ProfileUploadBase {
       @RequestParam("uploadedFileFix") MultipartFile file,
       @RequestParam(value = "fullNameFix", required = false) String fullName,
       @CurrentUsername String username) {
-    return super.execute(file, fullName != null ? fullName.replace("../", "") : "", username);
+    // The broken single-pass replace("../","") sanitizer is removed entirely; string
+    // manipulation of paths is always defeatable (e.g. "..././" reconstructs "../" after
+    // one pass). The secure base execute() relies on canonical-path containment instead.
+    return super.execute(file, fullName != null ? fullName : "", username);
   }
 
   @GetMapping("/PathTraversal/profile-picture-fix")

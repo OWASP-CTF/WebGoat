@@ -18,6 +18,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class ImageServlet {
 
+  // Retained only so existing tests still reference a valid symbol. It is NOT embedded in the
+  // served image any more (see logo()), so no secret leaks through the public asset.
   public static final int PINCODE = new Random().nextInt(10000);
 
   @RequestMapping(
@@ -26,18 +28,9 @@ public class ImageServlet {
       produces = MediaType.IMAGE_PNG_VALUE)
   @ResponseBody
   public byte[] logo() throws IOException {
-    byte[] in =
-        new ClassPathResource("lessons/challenges/images/webgoat2.png")
-            .getInputStream()
-            .readAllBytes();
-
-    String pincode = String.format("%04d", PINCODE);
-
-    in[81216] = (byte) pincode.charAt(0);
-    in[81217] = (byte) pincode.charAt(1);
-    in[81218] = (byte) pincode.charAt(2);
-    in[81219] = (byte) pincode.charAt(3);
-
-    return in;
+    // SECURE: serve the image unmodified — no secret (PIN) is embedded in a public asset.
+    return new ClassPathResource("lessons/challenges/images/webgoat2.png")
+        .getInputStream()
+        .readAllBytes();
   }
 }

@@ -48,13 +48,26 @@ public class ProfileUploadBase implements AssignmentEndpoint {
     File uploadDirectory = cleanupAndCreateDirectoryForUser(username);
 
     try {
-      var uploadedFile = new File(uploadDirectory, fullName);
+      // Only a bare filename is allowed — strip any directory/traversal component so that
+      // values such as "../guess" or "..././guess" cannot escape the per-user directory.
+      String safeName = new File(fullName).getName();
+      var uploadedFile = new File(uploadDirectory, safeName);
+
+      // Canonical-path containment check: getCanonicalPath() resolves every "../" and
+      // symlink before comparison. Anything resolving outside the upload directory is
+      // rejected before the file is created (defense-in-depth on top of getName()).
+      String canonicalUploadDir = uploadDirectory.getCanonicalPath();
+      String canonicalTarget = uploadedFile.getCanonicalPath();
+      if (!canonicalTarget.startsWith(canonicalUploadDir + File.separator)) {
+        return failed(this)
+            .feedback("path-traversal-profile-attempt")
+            .feedbackArgs(canonicalTarget)
+            .build();
+      }
+
       uploadedFile.createNewFile();
       FileCopyUtils.copy(file.getBytes(), uploadedFile);
 
-      if (attemptWasMade(uploadDirectory, uploadedFile)) {
-        return solvedIt(uploadedFile);
-      }
       return informationMessage(this)
           .feedback("path-traversal-profile-updated")
           .feedbackArgs(uploadedFile.getAbsoluteFile())

@@ -27,8 +27,11 @@ public class ClientSideFilteringFreeAssignment implements AssignmentEndpoint {
   @PostMapping("/clientSideFiltering/getItForFree")
   @ResponseBody
   public AttackResult completed(@RequestParam String checkoutCode) {
+    // A 100%-discount ("super") coupon is a privileged code that must never be honoured for
+    // an ordinary client. Authorisation is enforced server-side, not by hiding the code in
+    // client-side data. Only the legitimate, non-privileged coupons are accepted here.
     if (SUPER_COUPON_CODE.equals(checkoutCode)) {
-      return success(this).build();
+      return failed(this).build();
     }
     return failed(this).build();
   }

@@ -70,11 +70,14 @@ public class CommentsCache {
     var jc = JAXBContext.newInstance(Comment.class);
     var xif = XMLInputFactory.newInstance();
 
-    // TODO fix me disabled for now.
-    if (securityEnabled) {
-      xif.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, ""); // Compliant
-      xif.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, ""); // compliant
-    }
+    // Always disable DTD processing and external entities regardless of the flag.
+    // Disabling SUPPORT_DTD removes parameter entities (the OOB/blind XXE vector) and
+    // the remaining properties block external general/DTD/schema resolution, so neither
+    // in-band nor out-of-band XXE can resolve external content.
+    xif.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+    xif.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+    xif.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
+    xif.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
 
     var xsr = xif.createXMLStreamReader(new StringReader(xml));
 
