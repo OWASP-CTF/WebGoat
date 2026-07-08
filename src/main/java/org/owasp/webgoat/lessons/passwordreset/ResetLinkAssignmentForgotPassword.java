@@ -84,6 +84,12 @@ public class ResetLinkAssignmentForgotPassword implements AssignmentEndpoint {
     // so the victim's link is never handed to the attacker.
     String hostHeader = request.getHeader("host");
     if (hostHeader != null && !CANONICAL_HOST.equalsIgnoreCase(hostHeader.trim())) {
+      // The real reset link was mailed to the canonical host above. To mirror the victim's mail
+      // client fetching the link (which an attacker would try to observe on their WebWolf), we
+      // surface only a throw-away DECOY token here: it is never added to resetLinks and never
+      // bound to Tom, so capturing it from WebWolf grants no password reset. This deliberately
+      // keeps the attack observable while making the captured token useless.
+      fakeClickingLinkEmail(webWolfURL, UUID.randomUUID().toString());
       return failed(this)
           .feedbackArgs(email)
           .output("The Host header was ignored; the reset link was sent to the canonical host.")
