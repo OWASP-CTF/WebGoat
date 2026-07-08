@@ -9,8 +9,10 @@ import static org.owasp.webgoat.container.assignments.AttackResultBuilder.succes
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InvalidClassException;
 import java.io.ObjectInputStream;
+import java.io.ObjectStreamClass;
 import java.util.Base64;
 import org.dummy.insecure.framework.VulnerableTaskHolder;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
@@ -39,8 +41,15 @@ public class InsecureDeserializationTask implements AssignmentEndpoint {
 
     b64token = token.replace('-', '+').replace('_', '/');
 
+    // SECURE: VulnerableTaskHolder is itself the gadget — its readObject() runs an OS command,
+    // so it must never be reconstructed from attacker bytes. A look-ahead stream vets every class
+    // BEFORE it is instantiated (resolveClass is invoked prior to newInstance/readObject) and
+    // refuses anything outside a tiny allow-list of harmless JDK value types. Unlike a per-stream
+    // ObjectInputFilter this cannot be short-circuited by a JVM-wide serial-filter factory, so the
+    // dangerous readObject (and its sleep/Runtime.exec) is never reached.
     try (ObjectInputStream ois =
-        new ObjectInputStream(new ByteArrayInputStream(Base64.getDecoder().decode(b64token)))) {
+        new LookAheadObjectInputStream(
+            new ByteArrayInputStream(Base64.getDecoder().decode(b64token)))) {
       before = System.currentTimeMillis();
       Object o = ois.readObject();
       if (!(o instanceof VulnerableTaskHolder)) {
@@ -66,5 +75,27 @@ public class InsecureDeserializationTask implements AssignmentEndpoint {
       return failed(this).build();
     }
     return success(this).build();
+  }
+
+  /**
+   * ObjectInputStream that only permits a minimal allow-list of harmless JDK value types. Any
+   * other class — in particular the {@link VulnerableTaskHolder} gadget — is rejected before it
+   * can be instantiated or have its readObject() invoked.
+   */
+  private static final class LookAheadObjectInputStream extends ObjectInputStream {
+
+    LookAheadObjectInputStream(InputStream in) throws IOException {
+      super(in);
+    }
+
+    @Override
+    protected Class<?> resolveClass(ObjectStreamClass desc)
+        throws IOException, ClassNotFoundException {
+      String name = desc.getName();
+      if (name.startsWith("java.lang.") || name.startsWith("java.time.")) {
+        return super.resolveClass(desc);
+      }
+      throw new InvalidClassException(name, "unauthorized deserialization attempt");
+    }
   }
 }

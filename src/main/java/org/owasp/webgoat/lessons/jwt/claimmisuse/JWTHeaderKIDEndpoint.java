@@ -14,8 +14,11 @@ import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SigningKeyResolverAdapter;
 import io.jsonwebtoken.impl.TextCodec;
+import java.security.SecureRandom;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Base64;
 import org.apache.commons.lang3.StringUtils;
 import org.owasp.webgoat.container.LessonDataSource;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
@@ -40,6 +43,22 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/JWT/")
 public class JWTHeaderKIDEndpoint implements AssignmentEndpoint {
   private final LessonDataSource dataSource;
+
+  // The id of the legitimate signing key that the KID lesson looks up.
+  private static final String WEBGOAT_KID = "webgoat_key";
+
+  // SECURITY FIX (JWT kid known-key forgery): the seeded key value ('qwertyqwerty1234') is public
+  // knowledge, so anyone can forge a valid token by signing with it. On every resolve we rotate
+  // the stored value for the legitimate kid to an unpredictable, server-generated SecureRandom
+  // secret (16 base64 chars, fits the varchar(20) column). A token signed with the old, known key
+  // therefore fails signature verification and cannot solve the lesson.
+  private static final String ROTATED_KEY = generateStrongKey();
+
+  private static String generateStrongKey() {
+    byte[] keyBytes = new byte[12];
+    new SecureRandom().nextBytes(keyBytes);
+    return Base64.getEncoder().encodeToString(keyBytes);
+  }
 
   private JWTHeaderKIDEndpoint(LessonDataSource dataSource) {
     this.dataSource = dataSource;
@@ -68,14 +87,28 @@ public class JWTHeaderKIDEndpoint implements AssignmentEndpoint {
                       @Override
                       public byte[] resolveSigningKeyBytes(JwsHeader header, Claims claims) {
                         final String kid = (String) header.get("kid");
+                        // SECURITY FIX (kid SQL injection): bind the attacker-controlled `kid`
+                        // as a query parameter instead of concatenating it into the SQL string,
+                        // so a UNION/injection payload can no longer control the returned key.
                         try (var connection = dataSource.getConnection()) {
-                          ResultSet rs =
-                              connection
-                                  .createStatement()
-                                  .executeQuery(
-                                      "SELECT key FROM jwt_keys WHERE id = '" + kid + "'");
-                          while (rs.next()) {
-                            return TextCodec.BASE64.decode(rs.getString(1));
+                          // Rotate the legitimate key away from the public seed value before
+                          // resolving, so a token signed with the known key fails verification.
+                          try (PreparedStatement rotate =
+                              connection.prepareStatement(
+                                  "UPDATE jwt_keys SET key = ? WHERE id = ?")) {
+                            rotate.setString(1, ROTATED_KEY);
+                            rotate.setString(2, WEBGOAT_KID);
+                            rotate.executeUpdate();
+                          }
+                          try (PreparedStatement ps =
+                              connection.prepareStatement(
+                                  "SELECT key FROM jwt_keys WHERE id = ?")) {
+                            ps.setString(1, kid);
+                            try (ResultSet rs = ps.executeQuery()) {
+                              if (rs.next()) {
+                                return TextCodec.BASE64.decode(rs.getString(1));
+                              }
+                            }
                           }
                         } catch (SQLException e) {
                           errorMessage[0] = e.getMessage();

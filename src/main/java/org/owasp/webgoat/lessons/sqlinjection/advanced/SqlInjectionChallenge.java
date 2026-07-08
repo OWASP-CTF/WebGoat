@@ -12,8 +12,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
-
 import org.owasp.webgoat.container.LessonDataSource;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
@@ -56,10 +54,12 @@ public class SqlInjectionChallenge implements AssignmentEndpoint {
     if (attackResult.assignmentSolved()) {
 
       try (Connection connection = dataSource.getConnection()) {
-        String checkUserQuery =
-            "select userid from sql_challenge_users where userid = '" + username + "'";
-        Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(checkUserQuery);
+        // Bind the username so a "tom' AND SUBSTRING(password,1,1)='t" probe is treated as a
+        // literal user id — removing the boolean oracle used for blind password extraction.
+        PreparedStatement checkStatement =
+            connection.prepareStatement("SELECT userid FROM sql_challenge_users WHERE userid = ?");
+        checkStatement.setString(1, username);
+        ResultSet resultSet = checkStatement.executeQuery();
 
         if (resultSet.next()) {
           attackResult = failed(this).feedback("user.exists").feedbackArgs(username).build();

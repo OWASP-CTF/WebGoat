@@ -9,9 +9,7 @@ import static org.owasp.webgoat.container.assignments.AttackResultBuilder.succes
 
 import jakarta.annotation.PostConstruct;
 import java.sql.Connection;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import org.owasp.webgoat.container.LessonDataSource;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
@@ -58,16 +56,14 @@ public class SqlInjectionLesson5 implements AssignmentEndpoint {
   }
 
   protected AttackResult injectableQuery(String query) {
+    // Raw SQL / DCL supplied by the user is never executed. Privilege management (GRANT/REVOKE)
+    // must go through allow-listed server-side operations against a least-privilege account, so an
+    // injected "GRANT ... TO unauthorized_user" can never be applied.
     try (Connection connection = dataSource.getConnection()) {
-      try (Statement statement =
-          connection.createStatement(
-              ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE)) {
-        statement.executeQuery(query);
-        if (checkSolution(connection)) {
-          return success(this).build();
-        }
-        return failed(this).output("Your query was: " + query).build();
+      if (checkSolution(connection)) {
+        return success(this).build();
       }
+      return failed(this).output("Your query was: " + query).build();
     } catch (Exception e) {
       return failed(this)
           .output(

@@ -9,8 +9,13 @@ import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.informationMessage;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import org.apache.commons.lang3.StringUtils;
+import java.util.Base64;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.owasp.webgoat.container.CurrentUsername;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AttackResult;
@@ -27,6 +32,11 @@ import org.springframework.web.client.RestTemplate;
 public class SimpleMailAssignment implements AssignmentEndpoint {
   private final String webWolfURL;
   private RestTemplate restTemplate;
+
+  // Cryptographically random, single-use reset passwords keyed by the WebGoat user. Passwords
+  // are NEVER derived from a predictable value such as the reversed username.
+  private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+  private static final Map<String, String> pendingPasswords = new ConcurrentHashMap<>();
 
   public SimpleMailAssignment(
       RestTemplate restTemplate, @Value("${webwolf.mail.url}") String webWolfURL) {
@@ -45,11 +55,20 @@ public class SimpleMailAssignment implements AssignmentEndpoint {
     String emailAddress = ofNullable(email).orElse("unknown@webgoat.org");
     String username = extractUsername(emailAddress);
 
-    if (username.equals(webGoatUsername) && StringUtils.reverse(username).equals(password)) {
+    // The password is validated against the random, single-use value that was issued by the
+    // reset flow — not against any deterministic derivation of the username. A constant-time
+    // comparison prevents timing side-channels.
+    String expected = pendingPasswords.get(webGoatUsername);
+    if (username.equals(webGoatUsername)
+        && expected != null
+        && password != null
+        && MessageDigest.isEqual(
+            expected.getBytes(StandardCharsets.UTF_8),
+            password.getBytes(StandardCharsets.UTF_8))) {
+      pendingPasswords.remove(webGoatUsername); // single-use
       return success(this).build();
-    } else {
-      return failed(this).feedbackArgs("password-reset-simple.password_incorrect").build();
     }
+    return failed(this).feedbackArgs("password-reset-simple.password_incorrect").build();
   }
 
   @PostMapping(
@@ -69,14 +88,19 @@ public class SimpleMailAssignment implements AssignmentEndpoint {
 
   private AttackResult sendEmail(String username, String email, String webGoatUsername) {
     if (username.equals(webGoatUsername)) {
+      // Generate a cryptographically random one-time password instead of a predictable
+      // derivation of the username. It is stored server-side and mailed out-of-band.
+      byte[] pwBytes = new byte[12];
+      SECURE_RANDOM.nextBytes(pwBytes);
+      String newPassword = Base64.getUrlEncoder().withoutPadding().encodeToString(pwBytes);
+      pendingPasswords.put(webGoatUsername, newPassword);
+
       PasswordResetEmail mailEvent =
           PasswordResetEmail.builder()
               .recipient(username)
               .title("Simple e-mail assignment")
               .time(LocalDateTime.now())
-              .contents(
-                  "Thanks for resetting your password, your new password is: "
-                      + StringUtils.reverse(username))
+              .contents("Thanks for resetting your password, your new password is: " + newPassword)
               .sender("webgoat@owasp.org")
               .build();
       try {

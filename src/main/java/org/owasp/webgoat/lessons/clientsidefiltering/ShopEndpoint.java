@@ -48,17 +48,16 @@ public class ShopEndpoint {
 
   @GetMapping(value = "/coupons/{code}", produces = MediaType.APPLICATION_JSON_VALUE)
   public CheckoutCode getDiscountCode(@PathVariable String code) {
-    if (ClientSideFilteringFreeAssignment.SUPER_COUPON_CODE.equals(code)) {
-      return new CheckoutCode(ClientSideFilteringFreeAssignment.SUPER_COUPON_CODE, 100);
-    }
+    // Do NOT disclose the privileged super-coupon through the public API. Confidentiality
+    // must be enforced server-side, not by relying on the client to filter it out.
     return checkoutCodes.get(code).orElse(new CheckoutCode("no", 0));
   }
 
   @GetMapping(value = "/coupons", produces = MediaType.APPLICATION_JSON_VALUE)
   public CheckoutCodes all() {
+    // Only the ordinary, non-privileged coupons are returned; the super-coupon is never leaked.
     List<CheckoutCode> all = Lists.newArrayList();
     all.addAll(this.checkoutCodes.getCodes());
-    all.add(new CheckoutCode(ClientSideFilteringFreeAssignment.SUPER_COUPON_CODE, 100));
     return new CheckoutCodes(all);
   }
 }

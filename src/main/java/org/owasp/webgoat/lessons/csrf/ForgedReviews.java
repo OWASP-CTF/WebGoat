@@ -10,9 +10,14 @@ import static org.springframework.http.MediaType.ALL_VALUE;
 
 import com.google.common.collect.Lists;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -35,7 +40,8 @@ public class ForgedReviews implements AssignmentEndpoint {
 
   private static final Map<String, List<Review>> userReviews = new HashMap<>();
   private static final List<Review> REVIEWS = new ArrayList<>();
-  private static final String weakAntiCSRF = "2aa14227b9a13d0bede0388a7fba9aa9";
+  private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+  private static final String CSRF_TOKEN_ATTR = "csrf-token";
 
   static {
     REVIEWS.add(
@@ -74,11 +80,29 @@ public class ForgedReviews implements AssignmentEndpoint {
       Integer stars,
       String validateReq,
       HttpServletRequest request,
+      HttpSession session,
       @CurrentUsername String username) {
     final String host = (request.getHeader("host") == null) ? "NULL" : request.getHeader("host");
     final String referer =
         (request.getHeader("referer") == null) ? "NULL" : request.getHeader("referer");
-    final String[] refererArr = referer.split("/");
+
+    // Verify the per-session, unpredictable synchronizer token (constant-time compare).
+    // A static/guessable token or a cross-origin forgery cannot satisfy this check.
+    String expectedToken = getOrCreateCsrfToken(session);
+    if (validateReq == null
+        || !MessageDigest.isEqual(
+            validateReq.getBytes(StandardCharsets.UTF_8),
+            expectedToken.getBytes(StandardCharsets.UTF_8))) {
+      return failed(this).feedback("csrf-you-forgot-something").build();
+    }
+
+    // Defense in depth: reject same-origin mismatch using a correct (.equals) comparison.
+    if (!"NULL".equals(referer)) {
+      String[] refererArr = referer.split("/");
+      if (refererArr.length > 2 && refererArr[2].equals(host)) {
+        return failed(this).feedback("csrf-same-host").build();
+      }
+    }
 
     Review review = new Review();
     review.setText(reviewText);
@@ -88,17 +112,18 @@ public class ForgedReviews implements AssignmentEndpoint {
     var reviews = userReviews.getOrDefault(username, new ArrayList<>());
     reviews.add(review);
     userReviews.put(username, reviews);
-    // short-circuit
-    if (validateReq == null || !validateReq.equals(weakAntiCSRF)) {
-      return failed(this).feedback("csrf-you-forgot-something").build();
+
+    return success(this).feedback("csrf-review.success").build();
+  }
+
+  private String getOrCreateCsrfToken(HttpSession session) {
+    String token = (String) session.getAttribute(CSRF_TOKEN_ATTR);
+    if (token == null) {
+      byte[] bytes = new byte[32];
+      SECURE_RANDOM.nextBytes(bytes);
+      token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+      session.setAttribute(CSRF_TOKEN_ATTR, token);
     }
-    // we have the spoofed files
-    if (referer != "NULL" && refererArr[2].equals(host)) {
-      return failed(this).feedback("csrf-same-host").build();
-    } else {
-      return success(this)
-          .feedback("csrf-review.success")
-          .build(); // feedback("xss-stored-comment-failure")
-    }
+    return token;
   }
 }

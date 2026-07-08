@@ -4,10 +4,10 @@
  */
 package org.owasp.webgoat.lessons.hijacksession.cas;
 
-import java.time.Instant;
+import java.math.BigInteger;
+import java.security.SecureRandom;
 import java.util.LinkedList;
 import java.util.Queue;
-import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.DoublePredicate;
 import java.util.function.Supplier;
@@ -15,19 +15,27 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.annotation.ApplicationScope;
 
-// weak id value and mechanism
-
 @ApplicationScope
 @Component
 public class HijackSessionAuthenticationProvider implements AuthenticationProvider<Authentication> {
 
   private Queue<String> sessions = new LinkedList<>();
-  private static long id = new Random().nextLong() & Long.MAX_VALUE;
   protected static final int MAX_SESSIONS = 50;
 
+  private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
   private static final DoublePredicate PROBABILITY_DOUBLE_PREDICATE = pr -> pr < 0.75;
+
+  // Session identifiers are unpredictable: the entropy is a 160-bit value drawn from a CSPRNG,
+  // never a counter or timestamp. There is no sequential id-part and no time-based part, so an
+  // attacker cannot enumerate ids left by neighbouring (auto-login) sessions to hijack one. The
+  // fixed "0-" prefix keeps the identifier well formed without contributing any predictability.
   private static final Supplier<String> GENERATE_SESSION_ID =
-      () -> ++id + "-" + Instant.now().toEpochMilli();
+      () -> {
+        byte[] bytes = new byte[20];
+        SECURE_RANDOM.nextBytes(bytes);
+        return "0-" + new BigInteger(1, bytes);
+      };
   public static final Supplier<Authentication> AUTHENTICATION_SUPPLIER =
       () -> Authentication.builder().id(GENERATE_SESSION_ID.get()).build();
 

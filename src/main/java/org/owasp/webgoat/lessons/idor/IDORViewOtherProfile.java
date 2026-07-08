@@ -43,27 +43,20 @@ public class IDORViewOtherProfile implements AssignmentEndpoint {
   public AttackResult completed(@PathVariable("userId") String userId) {
 
     Object obj = userSessionData.getValue("idor-authenticated-as");
-    if (obj != null && obj.equals("tom")) {
-      // going to use session auth to view this one
-      String authUserId = (String) userSessionData.getValue("idor-authenticated-user-id");
-      if (userId != null && !userId.equals(authUserId)) {
-        // on the right track
-        UserProfile requestedProfile = new UserProfile(userId);
-        // secure code would ensure there was a horizontal access control check prior to dishing up
-        // the requested profile
-        if (requestedProfile.getUserId() != null
-            && requestedProfile.getUserId().equals("2342388")) {
-          return success(this)
-              .feedback("idor.view.profile.success")
-              .output(requestedProfile.profileToMap().toString())
-              .build();
-        } else {
-          return failed(this).feedback("idor.view.profile.close1").build();
-        }
-      } else {
-        return failed(this).feedback("idor.view.profile.close2").build();
-      }
+    if (obj == null || !obj.equals("tom")) {
+      return failed(this).build();
     }
-    return failed(this).build();
+    String authUserId = (String) userSessionData.getValue("idor-authenticated-user-id");
+    // Horizontal access control (BOLA) fix: the authenticated user may ONLY access their
+    // own profile. Any request for another user's id is rejected before the profile is
+    // ever loaded, regardless of whether that id resolves to an existing record.
+    if (userId == null || !userId.equals(authUserId)) {
+      return failed(this).feedback("idor.view.profile.close1").build();
+    }
+    UserProfile requestedProfile = new UserProfile(userId);
+    return success(this)
+        .feedback("idor.view.profile.success")
+        .output(requestedProfile.profileToMap().toString())
+        .build();
   }
 }

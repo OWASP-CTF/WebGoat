@@ -5,7 +5,6 @@
 package org.owasp.webgoat.lessons.ssrf;
 
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed;
-import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
@@ -25,26 +24,26 @@ public class SSRFTask1 implements AssignmentEndpoint {
     return stealTheCheese(url);
   }
 
+  // SECURE: the server owns every retrievable resource. The client-supplied value is treated as
+  // an opaque key mapped to a fixed, application-controlled path — it can no longer name an
+  // arbitrary resource, so substituting "images/jerry.png" is not honored.
+  private static final java.util.Map<String, String> ALLOWED_IMAGES =
+      java.util.Map.of("profile", "images/tom.png");
+
   protected AttackResult stealTheCheese(String url) {
     try {
-      StringBuilder html = new StringBuilder();
-
-      if (url.matches("images/tom\\.png")) {
-        html.append(
-            "<img class=\"image\" alt=\"Tom\" src=\"images/tom.png\" width=\"25%\""
-                + " height=\"25%\">");
-        return failed(this).feedback("ssrf.tom").output(html.toString()).build();
-      } else if (url.matches("images/jerry\\.png")) {
-        html.append(
-            "<img class=\"image\" alt=\"Jerry\" src=\"images/jerry.png\" width=\"25%\""
-                + " height=\"25%\">");
-        return success(this).feedback("ssrf.success").output(html.toString()).build();
-      } else {
-        html.append("<img class=\"image\" alt=\"Silly Cat\" src=\"images/cat.jpg\">");
-        return failed(this).feedback("ssrf.failure").output(html.toString()).build();
+      String resource = ALLOWED_IMAGES.get(url);
+      if (resource == null) {
+        // Not an approved identifier (including any client-supplied path such as jerry.png).
+        String html = "<img class=\"image\" alt=\"Silly Cat\" src=\"images/cat.jpg\">";
+        return failed(this).feedback("ssrf.failure").output(html).build();
       }
+      String html =
+          "<img class=\"image\" alt=\"Tom\" src=\""
+              + resource
+              + "\" width=\"25%\" height=\"25%\">";
+      return failed(this).feedback("ssrf.tom").output(html).build();
     } catch (Exception e) {
-      e.printStackTrace();
       return failed(this).output(e.getMessage()).build();
     }
   }

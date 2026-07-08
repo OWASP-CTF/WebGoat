@@ -13,6 +13,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Set;
 import org.owasp.webgoat.container.LessonDataSource;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
@@ -29,6 +30,9 @@ public class SqlInjectionLesson4 implements AssignmentEndpoint {
 
   private final LessonDataSource dataSource;
 
+  // Column names cannot be bound as parameters; validate them against a fixed allow-list.
+  private static final Set<String> ALLOWED_COLUMNS = Set.of("phone", "mobile");
+
   public SqlInjectionLesson4(LessonDataSource dataSource) {
     this.dataSource = dataSource;
   }
@@ -40,16 +44,22 @@ public class SqlInjectionLesson4 implements AssignmentEndpoint {
   }
 
   protected AttackResult injectableQuery(String query) {
+    // Only a vetted column name may be added; raw DDL from the user is never executed.
+    if (query == null || !ALLOWED_COLUMNS.contains(query.toLowerCase())) {
+      return failed(this).output("Column name not permitted.").build();
+    }
+    String columnName = query.toLowerCase();
     try (Connection connection = dataSource.getConnection()) {
       try (Statement statement =
           connection.createStatement(TYPE_SCROLL_INSENSITIVE, CONCUR_READ_ONLY)) {
-        statement.executeUpdate(query);
+        // columnName is a validated allow-list literal, safe to embed in the DDL template.
+        statement.executeUpdate("ALTER TABLE employees ADD " + columnName + " varchar(20)");
         connection.commit();
-        ResultSet results = statement.executeQuery("SELECT phone from employees;");
+        ResultSet results = statement.executeQuery("SELECT " + columnName + " from employees;");
         StringBuilder output = new StringBuilder();
-        // user completes lesson if column phone exists
+        // user completes lesson if the column now exists
         if (results.first()) {
-          output.append("<span class='feedback-positive'>" + query + "</span>");
+          output.append("<span class='feedback-positive'>" + columnName + "</span>");
           return success(this).output(output.toString()).build();
         } else {
           return failed(this).output(output.toString()).build();
