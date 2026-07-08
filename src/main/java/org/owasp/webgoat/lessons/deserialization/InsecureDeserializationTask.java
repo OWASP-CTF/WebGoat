@@ -40,8 +40,10 @@ public class InsecureDeserializationTask implements AssignmentEndpoint {
 
     b64token = token.replace('-', '+').replace('_', '/');
 
-    // SECURE: allowlist filter — reject every class except the one we expect, so no gadget
-    // chain (arbitrary readObject) can execute before the type is validated.
+    // SECURE: VulnerableTaskHolder is itself the gadget — its readObject() runs an OS command,
+    // so ALLOW-listing it would still execute the attacker's payload. Reject that class outright
+    // and permit only the harmless JDK value types used by the benign demonstration path, so the
+    // dangerous readObject is never invoked.
     ObjectInputFilter filter =
         info -> {
           Class<?> clazz = info.serialClass();
@@ -49,6 +51,10 @@ public class InsecureDeserializationTask implements AssignmentEndpoint {
             return ObjectInputFilter.Status.UNDECIDED;
           }
           if (clazz == VulnerableTaskHolder.class) {
+            return ObjectInputFilter.Status.REJECTED;
+          }
+          String name = clazz.getName();
+          if (name.startsWith("java.lang.") || name.startsWith("java.time.")) {
             return ObjectInputFilter.Status.ALLOWED;
           }
           return ObjectInputFilter.Status.REJECTED;

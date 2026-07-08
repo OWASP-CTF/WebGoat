@@ -4,7 +4,7 @@
  */
 package org.owasp.webgoat.lessons.challenges.challenge7;
 
-import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
+import static org.owasp.webgoat.container.assignments.AttackResultBuilder.informationMessage;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.math.BigInteger;
@@ -98,7 +98,10 @@ public class Assignment7 implements AssignmentEndpoint {
         restTemplate.postForEntity(webWolfMailURL, mail, Object.class);
       }
     }
-    return success(this).feedback("email.send").feedbackArgs(email).build();
+    // SECURE: merely sending a reset-link e-mail is an informational action and never solves
+    // the challenge on its own. The challenge is only completed through the intended flag flow,
+    // so a bare send request (including the admin exploit e-mail) is not marked completed.
+    return informationMessage(this).feedback("email.send").feedbackArgs(email).build();
   }
 
   // SECURE: the /challenge/7/.git endpoint has been removed — VCS metadata is never served,

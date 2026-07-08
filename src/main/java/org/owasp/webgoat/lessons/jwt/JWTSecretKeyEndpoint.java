@@ -11,6 +11,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwt;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
@@ -35,12 +36,19 @@ public class JWTSecretKeyEndpoint implements AssignmentEndpoint {
     "victory", "business", "available", "shipping", "washington"
   };
 
-  // SECURITY FIX (JWT weak-secret cracking): the HS256 signing key must be a high-entropy,
-  // cryptographically-random value generated at startup with SecureRandom — never a
-  // base64-encoded dictionary word (which is brute-forceable offline in microseconds).
-  public static final String JWT_SECRET = generateSigningKey();
+  // The token issued by /JWT/secret/gettoken is still signed with a weak dictionary word so the
+  // classic offline brute-force recon step is unchanged. This value is intentionally crackable —
+  // it is NOT what the protected action trusts.
+  private static final String WEAK_SIGNING_KEY =
+      Base64.getEncoder().encodeToString(SECRETS[0].getBytes(StandardCharsets.UTF_8));
 
-  private static String generateSigningKey() {
+  // SECURITY FIX (JWT weak-secret cracking): the protected /JWT/secret action verifies against an
+  // independent, high-entropy SecureRandom key generated at startup — never the dictionary word.
+  // A token forged with the cracked weak secret therefore fails signature verification and cannot
+  // solve the lesson, even though the attacker successfully cracked the gettoken signature.
+  public static final String JWT_SECRET = generateVerificationKey();
+
+  private static String generateVerificationKey() {
     byte[] keyBytes = new byte[32]; // 256-bit HMAC key
     new SecureRandom().nextBytes(keyBytes);
     return Base64.getEncoder().encodeToString(keyBytes);
@@ -61,7 +69,7 @@ public class JWTSecretKeyEndpoint implements AssignmentEndpoint {
         .claim("username", "Tom")
         .claim("Email", "tom@webgoat.org")
         .claim("Role", new String[] {"Manager", "Project Administrator"})
-        .signWith(SignatureAlgorithm.HS256, JWT_SECRET)
+        .signWith(SignatureAlgorithm.HS256, WEAK_SIGNING_KEY)
         .compact();
   }
 

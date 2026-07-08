@@ -77,6 +77,19 @@ public class ResetLinkAssignmentForgotPassword implements AssignmentEndpoint {
       return failed(this).output("E-mail can't be send. please try again.").build();
     }
 
+    // SECURE: reject host-header poisoning. The reset link is always built from the
+    // server-controlled canonical host; a request whose Host header attempts to point the
+    // link somewhere else (e.g. the attacker's WebWolf) is treated as an attack and must NOT
+    // mark this assignment solved. The mail above is still delivered to the canonical host,
+    // so the victim's link is never handed to the attacker.
+    String hostHeader = request.getHeader("host");
+    if (hostHeader != null && !CANONICAL_HOST.equalsIgnoreCase(hostHeader.trim())) {
+      return failed(this)
+          .feedbackArgs(email)
+          .output("The Host header was ignored; the reset link was sent to the canonical host.")
+          .build();
+    }
+
     return success(this).feedback("email.send").feedbackArgs(email).build();
   }
 

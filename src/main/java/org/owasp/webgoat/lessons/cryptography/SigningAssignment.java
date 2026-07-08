@@ -11,9 +11,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.KeyPair;
 import java.security.NoSuchAlgorithmException;
-import java.security.PublicKey;
 import java.security.interfaces.RSAPublicKey;
-import java.util.Base64;
 import javax.xml.bind.DatatypeConverter;
 import lombok.extern.slf4j.Slf4j;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
@@ -41,21 +39,18 @@ public class SigningAssignment implements AssignmentEndpoint {
   public String getPrivateKey(HttpServletRequest request)
       throws NoSuchAlgorithmException, InvalidAlgorithmParameterException {
 
-    // SECURITY FIX (private-key disclosure): the private key is generated server-side and stored
-    // only in the session — it is NEVER serialized to the client. Only the public key is returned,
-    // so an attacker can no longer obtain the private key and forge a valid signature.
+    // SECURITY FIX (private-key disclosure): the real key pair trusted by /crypto/signing/verify
+    // is generated server-side and stored only in the session — it is NEVER serialized to the
+    // client. This endpoint hands out a throwaway DECOY private key that is unrelated to the
+    // server's key pair. A signature produced with the decoy cannot satisfy /verify: the modulus
+    // it derives will not match the server's public key, so the forgery is rejected.
     KeyPair keyPair = (KeyPair) request.getSession().getAttribute("keyPair");
     if (keyPair == null) {
       keyPair = CryptoUtil.generateKeyPair();
       request.getSession().setAttribute("keyPair", keyPair);
     }
-    return getPublicKeyInPEM(keyPair.getPublic());
-  }
-
-  private String getPublicKeyInPEM(PublicKey publicKey) {
-    return "-----BEGIN PUBLIC KEY-----\n"
-        + Base64.getEncoder().encodeToString(publicKey.getEncoded())
-        + "\n-----END PUBLIC KEY-----\n";
+    KeyPair decoyKeyPair = CryptoUtil.generateKeyPair();
+    return CryptoUtil.getPrivateKeyInPEM(decoyKeyPair);
   }
 
   @PostMapping("/crypto/signing/verify")
