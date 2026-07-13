@@ -206,8 +206,8 @@ jobs:
           script: |
             const marker = '<!-- ctf-score-ack -->';
             const sha = (context.payload.pull_request.head.sha || '').slice(0, 7);
-            const body = `${marker}\n🏁 **Score recorded**\n\n`
-              + `Your patch was evaluated and your result has been saved to the leaderboard.\n\n`
+            const body = `${marker}\n🎉 **Score recorded!**\n\n`
+              + `Great work — your patch has been evaluated and your result is now on the [leaderboard](https://ctf.owasp.org/leaderboard)! 🏆 Head over and see where you rank!\n\n`
               + `Commit: \`${sha}\``;
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
