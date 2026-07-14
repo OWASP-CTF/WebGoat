@@ -39,6 +39,39 @@ env:
   SCORER_IMAGE: ghcr.io/owasp-ctf/score:latest
 
 jobs:
+  # Fast feedback that the run started. Posts a placeholder under the SAME marker the `ack` job
+  # uses, so `ack` overwrites it in place with the result — the PR ends with one comment, not a
+  # thread. Without this, a contestant stares at a silent PR for the many minutes scoring takes.
+  # Runs in parallel with `score` (nothing blocks on it) and NEVER runs the PR's code.
+  pending:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Upsert the "scoring in progress" comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- ctf-score-ack -->';
+            const sha = (context.payload.pull_request.head.sha || '').slice(0, 7);
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\n⏳ **Scoring your patch…**\n\n`
+              + `Hang tight — we're building your app and running the full challenge rubric against it. `
+              + `This takes a few minutes. This comment will update itself with your result as soon as the `
+              + `[scoring run](${run}) finishes — no need to do anything.\n\n`
+              + `Commit: \`${sha}\``;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
   score:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -193,22 +226,35 @@ jobs:
             echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # Resolve the placeholder `pending` posted (same marker → updated in place). Leak-safe:
+  # confirms the submission landed WITHOUT the score table (which would reveal which challenges
+  # are solved). Runs even when the score or the leaderboard push failed, so the "⏳ Scoring…"
+  # placeholder is always replaced by a real outcome instead of hanging forever. Skipped only on
+  # cancellation — a superseding push cancels this run, and its own `pending` job immediately
+  # rewrites the comment. NEVER runs the PR's code.
   ack:
     needs: publish
-    if: ${{ always() && needs.publish.outputs.pushed == 'true' }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     steps:
       - name: Upsert the leaderboard ACK comment
         uses: actions/github-script@v7
+        env:
+          PUSHED: ${{ needs.publish.outputs.pushed }}
         with:
           script: |
             const marker = '<!-- ctf-score-ack -->';
             const sha = (context.payload.pull_request.head.sha || '').slice(0, 7);
-            const body = `${marker}\n🎉 **Score recorded!**\n\n`
-              + `Great work — your patch has been evaluated and your result is now on the [leaderboard](https://ctf.owasp.org/leaderboard)! 🏆 Head over and see where you rank!\n\n`
-              + `Commit: \`${sha}\``;
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = process.env.PUSHED === 'true'
+              ? `${marker}\n🎉 **Score recorded!**\n\n`
+                + `Great work — your patch has been evaluated and your result is now on the [leaderboard](https://ctf.owasp.org/leaderboard)! 🏆 Head over and see where you rank!\n\n`
+                + `Commit: \`${sha}\``
+              : `${marker}\n⚠️ **Scoring did not complete**\n\n`
+                + `We couldn't record a score for this commit. Check the [scoring run](${run}) for details, then push a new commit to retry.\n\n`
+                + `Commit: \`${sha}\``;
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
