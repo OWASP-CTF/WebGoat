@@ -233,7 +233,7 @@ jobs:
   # cancellation — a superseding push cancels this run, and its own `pending` job immediately
   # rewrites the comment. NEVER runs the PR's code.
   ack:
-    needs: publish
+    needs: [score, publish]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
@@ -243,18 +243,32 @@ jobs:
         uses: actions/github-script@v7
         env:
           PUSHED: ${{ needs.publish.outputs.pushed }}
+          SCORE_RESULT: ${{ needs.score.result }}
         with:
           script: |
             const marker = '<!-- ctf-score-ack -->';
             const sha = (context.payload.pull_request.head.sha || '').slice(0, 7);
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = process.env.PUSHED === 'true'
-              ? `${marker}\n🎉 **Score recorded!**\n\n`
-                + `Great work — your patch has been evaluated and your result is now on the [leaderboard](https://ctf.owasp.org/leaderboard)! 🏆 Head over and see where you rank!\n\n`
-                + `Commit: \`${sha}\``
-              : `${marker}\n⚠️ **Scoring did not complete**\n\n`
-                + `We couldn't record a score for this commit. Check the [scoring run](${run}) for details, then push a new commit to retry.\n\n`
-                + `Commit: \`${sha}\``;
+            // Three outcomes, not two. The scorer SKIPS the leaderboard write when a PR solves
+            // nothing (`leaderboard push skipped (no-solves)`), so an empty PUSHED is the normal
+            // result of a healthy run that simply scored zero — not an error. Only a `score` job
+            // that did not succeed is a real failure.
+            let headline, detail;
+            if (process.env.SCORE_RESULT !== 'success') {
+              headline = '⚠️ **Scoring did not complete**';
+              detail = `We couldn't score this commit \u2014 your app may have failed to build or boot. `
+                + `Check the [scoring run](${run}) for details, then push a new commit to retry.`;
+            } else if (process.env.PUSHED === 'true') {
+              headline = '🎉 **Score recorded!**';
+              detail = `Great work \u2014 your patch has been evaluated and your result is now on the `
+                + `[leaderboard](https://ctf.owasp.org/leaderboard)! 🏆 Head over and see where you rank!`;
+            } else {
+              headline = '✅ **Scoring complete \u2014 no points yet**';
+              detail = `Your app built and ran, and we scored it against the full challenge rubric \u2014 but `
+                + `this commit didn't solve any challenges, so there's nothing to add to the `
+                + `[leaderboard](https://ctf.owasp.org/leaderboard) yet. Patch a vulnerability and push again! 💪`;
+            }
+            const body = `${marker}\n${headline}\n\n${detail}\n\nCommit: \`${sha}\``;
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
