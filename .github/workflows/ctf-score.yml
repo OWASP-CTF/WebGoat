@@ -78,6 +78,12 @@ jobs:
     permissions:
       contents: read
       packages: read
+    outputs:
+      # The sidecar crosses to `publish` as a job OUTPUT, never an artifact: this fork is
+      # PUBLIC, and Actions artifacts are downloadable by any GitHub user, so an uploaded
+      # ctf-score.json would hand every competitor the list of solved challenges. Job outputs
+      # are not printed in the log and are not exposed through the REST API.
+      sidecar: ${{ steps.score.outputs.sidecar }}
     steps:
       - name: Check out the PR head (untrusted — used only to docker build the app)
         uses: actions/checkout@v5
@@ -144,6 +150,7 @@ jobs:
           echo "WEBGOAT_DESER_PAYLOAD=$PAYLOAD" >> "$GITHUB_ENV"
 
       - name: Score the patched WebGoat (embedded rubric)
+        id: score
         run: |
           mkdir -p "$PWD/score-out"
           rc=0
@@ -151,32 +158,19 @@ jobs:
             -e GITHUB_WORKSPACE=/out -v "$PWD/score-out:/out" -w /out \
             -e WEBWOLF_URL=http://app:9090/WebWolf \
             -e WEBGOAT_LEAKED_ADMIN_PW -e WEBGOAT_DESER_PAYLOAD \
-            "$SCORER_IMAGE" --target webgoat --url http://app:8080/WebGoat || rc=$?
+            "$SCORER_IMAGE" --quiet --target webgoat --url http://app:8080/WebGoat || rc=$?
           if [ "$rc" -ge 100 ]; then echo "::error::scorer failed (exit $rc)"; exit "$rc"; fi
           echo "Scorer finished: $rc challenge(s) still open."
+
+          # Hand the sidecar to the privileged `publish` job WITHOUT uploading it anywhere a
+          # contestant can read. Base64 keeps it to one line for $GITHUB_OUTPUT.
+          if [ -s "$PWD/score-out/ctf-score.json" ]; then
+            echo "sidecar=$(base64 < "$PWD/score-out/ctf-score.json" | tr -d '\n')" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Stop containers
         if: always()
         run: docker rm -f app 2>/dev/null || true
-
-      - name: Ensure a score file exists
-        if: always()
-        run: |
-          if [ ! -s "$PWD/score-out/ctf-score.md" ]; then
-            printf '## CTF Patch Score\n\nThe score run produced no output — check the [job log](%s/%s/actions/runs/%s).\n' \
-              "${{ github.server_url }}" "${{ github.repository }}" "${{ github.run_id }}" \
-              > "$PWD/score-out/ctf-score.md"
-          fi
-
-      - name: Upload the score table + JSON sidecar
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: ctf-score
-          path: |
-            score-out/ctf-score.md
-            score-out/ctf-score.json
-          if-no-files-found: error
 
   publish:
     needs: score
@@ -197,12 +191,18 @@ jobs:
       - name: Pull the private scorer image
         run: docker pull "$SCORER_IMAGE"
 
-      - name: Download the score artifact (table + JSON sidecar)
-        uses: actions/download-artifact@v5
-        continue-on-error: true
-        with:
-          name: ctf-score
-          path: score-out
+      - name: Materialise the score sidecar from the score job's output
+        # Via env, NOT inline ${{ }} interpolation into the shell — the value is produced on the
+        # runner that built the PR's Dockerfile, so it is treated as untrusted input.
+        env:
+          SIDECAR: ${{ needs.score.outputs.sidecar }}
+        run: |
+          mkdir -p score-out
+          if [ -n "$SIDECAR" ]; then
+            printf '%s' "$SIDECAR" | base64 -d > score-out/ctf-score.json
+          else
+            echo "No sidecar from the score job — nothing to publish."
+          fi
 
       - name: Push the score to the Upstash leaderboard
         id: push
@@ -279,35 +279,3 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
 
-  comment:
-    needs: score
-    if: ${{ always() && vars.CTF_POST_COMMENT == 'true' }}
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Download the score table
-        uses: actions/download-artifact@v5
-        with:
-          name: ctf-score
-          path: score-out
-
-      - name: Upsert the score comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const marker = '<!-- ctf-score -->';
-            const file = 'score-out/ctf-score.md';
-            const body = `${marker}\n` + (fs.existsSync(file)
-              ? fs.readFileSync(file, 'utf8')
-              : 'CTF score run produced no output.');
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
-            const existing = comments.find((c) => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
-            }
