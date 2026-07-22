@@ -1,0 +1,39 @@
+# Consumer workflow for the OWASP-CTF/WebGoat CTF fork.
+#
+# Replaces the hand-rolled ctf-score.yml: OWASP-CTF/score-action does everything — checks out
+# the PR head, mints the OIDC id-token, builds + boots the app, scores it against the embedded
+# rubric, and records the result. The boot lives in the scorer image's baked entrypoint
+# (score-webgoat-challenges.sh), which also registers the webgoat/webgoat account the rubric
+# logs in as and gathers the two docker-only values lessons 72 + 74 need.
+#
+# The PR's untrusted code only ever runs inside containers on an --internal network, never on
+# the runner host. Do NOT add a step that runs PR-controlled code directly here.
+name: score
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: score-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read # the action checks out the PR head to docker-build
+      packages: read # the action pulls the org-internal scorer image
+      id-token: write # the action mints the OIDC id-token POST /score authorizes
+      pull-requests: write # the result comment
+    steps:
+      - name: Score + record
+        uses: OWASP-CTF/score-action@main
+        with:
+          target: webgoat
+          # One container serves WebGoat on :8080 and its companion WebWolf on :9090.
+          app-url: http://app:8080/WebGoat
