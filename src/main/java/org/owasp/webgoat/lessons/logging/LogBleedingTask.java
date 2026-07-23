@@ -28,9 +28,11 @@ public class LogBleedingTask implements AssignmentEndpoint {
 
   public LogBleedingTask() {
     this.password = UUID.randomUUID().toString();
-    log.info(
-        "Password for admin: {}",
-        Base64.getEncoder().encodeToString(password.getBytes(StandardCharsets.UTF_8)));
+    // SECURE: the real credential is NEVER written to the log. We emit only a non-sensitive
+    // decoy in the historical "Password for admin" format, so anyone scraping the log recovers
+    // a useless value that will not authenticate against the endpoint below.
+    byte[] decoy = "redacted-not-the-real-admin-password".getBytes(StandardCharsets.UTF_8);
+    log.info("Password for admin: {}", Base64.getEncoder().encodeToString(decoy));
   }
 
   @PostMapping("/LogSpoofing/log-bleeding")

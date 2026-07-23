@@ -7,11 +7,13 @@ package org.owasp.webgoat.lessons.ssrf;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.Set;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
 import org.owasp.webgoat.container.assignments.AttackResult;
@@ -30,25 +32,46 @@ public class SSRFTask2 implements AssignmentEndpoint {
     return furBall(url);
   }
 
+  // SECURE: only these hosts may be fetched; arbitrary client-supplied hosts (e.g. ifconfig.pro,
+  // internal services, or the cloud metadata endpoint) are rejected.
+  private static final Set<String> ALLOWED_HOSTS = Set.of("images.webgoat.local");
+
   protected AttackResult furBall(String url) {
-    if (url.matches("http://ifconfig\\.pro")) {
-      String html;
-      try (InputStream in = new URL(url).openStream()) {
-        html =
-            new String(in.readAllBytes(), StandardCharsets.UTF_8)
-                .replaceAll("\n", "<br>"); // Otherwise the \n gets escaped in the response
-      } catch (MalformedURLException e) {
-        return getFailedResult(e.getMessage());
-      } catch (IOException e) {
-        // in case the external site is down, the test and lesson should still be ok
-        html =
-            "<html><body>Although the http://ifconfig.pro site is down, you still managed to solve"
-                + " this exercise the right way!</body></html>";
-      }
-      return success(this).feedback("ssrf.success").output(html).build();
+    URI target;
+    try {
+      target = URI.create(url);
+    } catch (IllegalArgumentException e) {
+      return getFailedResult("Invalid URL");
     }
-    var html = "<img class=\"image\" alt=\"image post\" src=\"images/cat.jpg\">";
-    return getFailedResult(html);
+
+    String host = target.getHost();
+    if (host == null || !ALLOWED_HOSTS.contains(host)) {
+      return getFailedResult("Destination not permitted");
+    }
+
+    try {
+      // Defeat DNS rebinding / internal-range access: reject non-public resolved addresses.
+      for (InetAddress addr : InetAddress.getAllByName(host)) {
+        if (addr.isLoopbackAddress()
+            || addr.isLinkLocalAddress()
+            || addr.isSiteLocalAddress()
+            || addr.isAnyLocalAddress()) {
+          return getFailedResult("Destination not permitted");
+        }
+      }
+
+      HttpClient client =
+          HttpClient.newBuilder()
+              .followRedirects(HttpClient.Redirect.NEVER)
+              .connectTimeout(Duration.ofSeconds(3))
+              .build();
+      HttpRequest request =
+          HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(5)).GET().build();
+      HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+      return success(this).feedback("ssrf.success").output(response.body()).build();
+    } catch (Exception e) {
+      return getFailedResult(e.getMessage());
+    }
   }
 
   private AttackResult getFailedResult(String errorMsg) {

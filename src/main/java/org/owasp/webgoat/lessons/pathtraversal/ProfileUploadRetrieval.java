@@ -15,8 +15,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.security.MessageDigest;
 import java.util.Base64;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomUtils;
 import org.owasp.webgoat.container.CurrentUsername;
@@ -28,9 +31,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.token.Sha512DigestUtils;
 import org.springframework.util.FileCopyUtils;
-import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -50,6 +51,10 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProfileUploadRetrieval implements AssignmentEndpoint {
   private final File catPicturesDirectory;
 
+  // Unpredictable, server-generated secret. It is NOT derived from any attacker-known value
+  // (such as the username), so it cannot be computed offline.
+  private final String secretToken = UUID.randomUUID().toString();
+
   public ProfileUploadRetrieval(@Value("${webgoat.server.directory}") String webGoatHomeDirectory) {
     this.catPicturesDirectory = new File(webGoatHomeDirectory, "/PathTraversal/" + "/cats");
     this.catPicturesDirectory.mkdirs();
@@ -68,9 +73,10 @@ public class ProfileUploadRetrieval implements AssignmentEndpoint {
     }
     var secretDirectory = this.catPicturesDirectory.getParentFile().getParentFile();
     try {
+      // The secret written to disk is the unpredictable server token, not an instruction to
+      // compute a deterministic hash of a known value.
       Files.writeString(
-          secretDirectory.toPath().resolve("path-traversal-secret.jpg"),
-          "You found it submit the SHA-512 hash of your username as answer");
+          secretDirectory.toPath().resolve("path-traversal-secret.jpg"), secretToken);
     } catch (IOException e) {
       log.error("Unable to write secret in: {}", secretDirectory, e);
     }
@@ -81,7 +87,12 @@ public class ProfileUploadRetrieval implements AssignmentEndpoint {
   public AttackResult execute(
       @RequestParam(value = "secret", required = false) String secret,
       @CurrentUsername String username) {
-    if (Sha512DigestUtils.shaHex(username).equalsIgnoreCase(secret)) {
+    // Compare against the unpredictable server-side token using a constant-time comparison.
+    // The secret can no longer be derived from the (attacker-known) username.
+    if (secret != null
+        && MessageDigest.isEqual(
+            secretToken.getBytes(StandardCharsets.UTF_8),
+            secret.getBytes(StandardCharsets.UTF_8))) {
       return success(this).build();
     }
     return failed(this).build();
@@ -90,32 +101,38 @@ public class ProfileUploadRetrieval implements AssignmentEndpoint {
   @GetMapping("/PathTraversal/random-picture")
   @ResponseBody
   public ResponseEntity<?> getProfilePicture(HttpServletRequest request) {
-    var queryParams = request.getQueryString();
-    if (queryParams != null && (queryParams.contains("..") || queryParams.contains("/"))) {
-      return ResponseEntity.badRequest()
-          .body("Illegal characters are not allowed in the query params");
-    }
-    try {
-      var id = request.getParameter("id");
-      var catPicture =
-          new File(catPicturesDirectory, (id == null ? RandomUtils.nextInt(1, 11) : id) + ".jpg");
+    var id = request.getParameter("id");
 
-      if (catPicture.getName().toLowerCase().contains("path-traversal-secret.jpg")) {
-        return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType(MediaType.IMAGE_JPEG_VALUE))
-            .body(FileCopyUtils.copyToByteArray(catPicture));
+    // Accept only a numeric picture id within the valid range. Any non-numeric input is
+    // rejected outright, so a path such as "../path-traversal-secret" can never be
+    // constructed from user input.
+    int pictureId;
+    try {
+      pictureId = (id == null) ? RandomUtils.nextInt(1, 11) : Integer.parseInt(id.trim());
+    } catch (NumberFormatException e) {
+      return ResponseEntity.badRequest().build();
+    }
+    if (pictureId < 1 || pictureId > 10) {
+      return ResponseEntity.badRequest().build();
+    }
+
+    try {
+      var catPicture = new File(catPicturesDirectory, pictureId + ".jpg");
+
+      // Defense-in-depth: canonical-path containment ensures the resolved file cannot escape
+      // the cats directory.
+      String canonicalDir = catPicturesDirectory.getCanonicalPath();
+      if (!catPicture.getCanonicalPath().startsWith(canonicalDir + File.separator)) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
       }
+
       if (catPicture.exists()) {
         return ResponseEntity.ok()
             .contentType(MediaType.parseMediaType(MediaType.IMAGE_JPEG_VALUE))
-            .location(new URI("/PathTraversal/random-picture?id=" + catPicture.getName()))
+            .location(new URI("/PathTraversal/random-picture?id=" + pictureId))
             .body(Base64.getEncoder().encode(FileCopyUtils.copyToByteArray(catPicture)));
       }
-      return ResponseEntity.status(HttpStatus.NOT_FOUND)
-          .location(new URI("/PathTraversal/random-picture?id=" + catPicture.getName()))
-          .body(
-              StringUtils.arrayToCommaDelimitedString(catPicture.getParentFile().listFiles())
-                  .getBytes());
+      return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
     } catch (IOException | URISyntaxException e) {
       log.error("Image not found", e);
     }

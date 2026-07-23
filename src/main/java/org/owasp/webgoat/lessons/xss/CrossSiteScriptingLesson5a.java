@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.HtmlUtils;
 
 @RestController
 @AssignmentHints(
@@ -60,9 +61,14 @@ public class CrossSiteScriptingLesson5a implements AssignmentEndpoint {
             + QTY4.intValue() * 299.99;
 
     userSessionData.setValue("xss-reflected1-complete", "false");
+    // HTML-encode the reflected credit-card value up front. The encoded value is what is
+    // written to the page (so any injected markup renders as inert text) AND what the
+    // execution check below inspects, so an injected <script> can neither run nor satisfy
+    // the success condition (blocks reflected XSS).
+    String encodedField1 = HtmlUtils.htmlEscape(field1);
     StringBuilder cart = new StringBuilder();
     cart.append("Thank you for shopping at WebGoat. <br />Your support is appreciated<hr />");
-    cart.append("<p>We have charged credit card:" + field1 + "<br />");
+    cart.append("<p>We have charged credit card:" + encodedField1 + "<br />");
     cart.append("                             ------------------- <br />");
     cart.append("                               $" + totalSale);
 
@@ -71,7 +77,7 @@ public class CrossSiteScriptingLesson5a implements AssignmentEndpoint {
       userSessionData.setValue("xss-reflected1-complete", "false");
     }
 
-    if (XSS_PATTERN.test(field1)) {
+    if (XSS_PATTERN.test(encodedField1)) {
       userSessionData.setValue("xss-reflected-5a-complete", "true");
       if (field1.toLowerCase().contains("console.log")) {
         return success(this)

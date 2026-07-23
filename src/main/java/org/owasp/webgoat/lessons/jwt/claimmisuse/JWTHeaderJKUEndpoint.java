@@ -53,6 +53,17 @@ public class JWTHeaderJKUEndpoint implements AssignmentEndpoint {
     } else {
       try {
         var decodedJWT = JWT.decode(token);
+
+        // SECURITY FIX (JKU injection / SSRF + key confusion): never fetch verification keys from
+        // a URL supplied inside the token. Any token carrying an attacker-controlled `jku` header
+        // is rejected outright; signing-key material must be configured out-of-band.
+        if (!decodedJWT.getHeaderClaim("jku").isNull()) {
+          return failed(this)
+              .feedback("jwt-invalid-token")
+              .output("jku header claim is not permitted")
+              .build();
+        }
+
         var jku = decodedJWT.getHeaderClaim("jku");
         var jwkProvider = new JwkProviderBuilder(new URL(jku.asString())).build();
         var jwk = jwkProvider.get(decodedJWT.getKeyId());

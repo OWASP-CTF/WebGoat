@@ -5,7 +5,6 @@
 package org.owasp.webgoat.lessons.idor;
 
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed;
-import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AssignmentHints;
@@ -32,30 +31,14 @@ public class IDORViewOwnProfileAltUrl implements AssignmentEndpoint {
   @PostMapping("/IDOR/profile/alt-path")
   @ResponseBody
   public AttackResult completed(@RequestParam String url) {
-    try {
-      if (userSessionData.getValue("idor-authenticated-as").equals("tom")) {
-        // going to use session auth to view this one
-        String authUserId = (String) userSessionData.getValue("idor-authenticated-user-id");
-        // don't care about http://localhost:8080 ... just want WebGoat/
-        String[] urlParts = url.split("/");
-        if (urlParts[0].equals("WebGoat")
-            && urlParts[1].equals("IDOR")
-            && urlParts[2].equals("profile")
-            && urlParts[3].equals(authUserId)) {
-          UserProfile userProfile = new UserProfile(authUserId);
-          return success(this)
-              .feedback("idor.view.own.profile.success")
-              .output(userProfile.profileToMap().toString())
-              .build();
-        } else {
-          return failed(this).feedback("idor.view.own.profile.failure1").build();
-        }
-
-      } else {
-        return failed(this).feedback("idor.view.own.profile.failure2").build();
-      }
-    } catch (Exception ex) {
-      return failed(this).output("an error occurred with your request").build();
+    // A server-side resource must never be resolved from a client-supplied URL string. The only
+    // supported way to view your own profile is the server-derived endpoint /IDOR/profile, which
+    // keys off the authenticated session. This URL-driven alternate path is no longer honored, so
+    // it can no longer be used (with any crafted url) to dish up a profile.
+    Object authenticatedAs = userSessionData.getValue("idor-authenticated-as");
+    if (!"tom".equals(authenticatedAs)) {
+      return failed(this).feedback("idor.view.own.profile.failure2").build();
     }
+    return failed(this).feedback("idor.view.own.profile.failure1").build();
   }
 }

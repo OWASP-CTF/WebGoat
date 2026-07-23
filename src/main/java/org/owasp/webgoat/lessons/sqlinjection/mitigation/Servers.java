@@ -6,6 +6,7 @@ package org.owasp.webgoat.lessons.sqlinjection.mitigation;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +24,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class Servers {
 
   private final LessonDataSource dataSource;
+
+  // ORDER BY identifiers cannot be bound as parameters; resolve the user value through a fixed
+  // allow-list so arbitrary sub-queries / CASE expressions can never reach the SQL string.
+  private static final Map<String, String> SORTABLE_COLUMNS =
+      Map.of(
+          "id", "id",
+          "hostname", "hostname",
+          "ip", "ip",
+          "mac", "mac",
+          "status", "status",
+          "description", "description");
 
   @AllArgsConstructor
   @Getter
@@ -43,6 +55,11 @@ public class Servers {
   @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
   @ResponseBody
   public List<Server> sort(@RequestParam String column) throws Exception {
+    String orderBy = SORTABLE_COLUMNS.get(column);
+    if (orderBy == null) {
+      throw new IllegalArgumentException("Invalid sort column");
+    }
+
     List<Server> servers = new ArrayList<>();
 
     try (var connection = dataSource.getConnection()) {
@@ -50,7 +67,7 @@ public class Servers {
           connection.prepareStatement(
               "select id, hostname, ip, mac, status, description from SERVERS where status <> 'out"
                   + " of order' order by "
-                  + column)) {
+                  + orderBy)) {
         try (var rs = statement.executeQuery()) {
           while (rs.next()) {
             Server server =

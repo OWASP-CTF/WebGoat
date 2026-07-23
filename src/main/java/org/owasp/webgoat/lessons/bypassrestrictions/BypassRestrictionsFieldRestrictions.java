@@ -7,6 +7,7 @@ package org.owasp.webgoat.lessons.bypassrestrictions;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
+import java.util.Set;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AttackResult;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,6 +18,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class BypassRestrictionsFieldRestrictions implements AssignmentEndpoint {
 
+  private static final Set<String> VALID_SELECT = Set.of("option1", "option2");
+  private static final Set<String> VALID_RADIO = Set.of("option1", "option2");
+  private static final Set<String> VALID_CHECKBOX = Set.of("on", "off");
+  private static final int MAX_SHORT_INPUT_LENGTH = 5;
+  private static final String EXPECTED_READONLY = "change";
+
   @PostMapping("/BypassRestrictions/FieldRestrictions")
   @ResponseBody
   public AttackResult completed(
@@ -25,19 +32,21 @@ public class BypassRestrictionsFieldRestrictions implements AssignmentEndpoint {
       @RequestParam String checkbox,
       @RequestParam String shortInput,
       @RequestParam String readOnlyInput) {
-    if (select.equals("option1") || select.equals("option2")) {
+    // Enforce the same constraints server-side that the HTML form enforces client-side.
+    // Any value outside the allow-list / boundary is rejected instead of being accepted.
+    if (!VALID_SELECT.contains(select)) {
       return failed(this).build();
     }
-    if (radio.equals("option1") || radio.equals("option2")) {
+    if (!VALID_RADIO.contains(radio)) {
       return failed(this).build();
     }
-    if (checkbox.equals("on") || checkbox.equals("off")) {
+    if (!VALID_CHECKBOX.contains(checkbox)) {
       return failed(this).build();
     }
-    if (shortInput.length() <= 5) {
+    if (shortInput == null || shortInput.length() > MAX_SHORT_INPUT_LENGTH) {
       return failed(this).build();
     }
-    if ("change".equals(readOnlyInput)) {
+    if (!EXPECTED_READONLY.equals(readOnlyInput)) {
       return failed(this).build();
     }
     return success(this).build();
